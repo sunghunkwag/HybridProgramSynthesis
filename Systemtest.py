@@ -38,10 +38,13 @@ except ImportError:
     np = None
 
 try:
-    from neuro_genetic_synthesizer import NeuroGeneticSynthesizer, NeuroInterpreter
+    from neuro_genetic_synthesizer import NeuroGeneticSynthesizer, NeuroInterpreter, HybridSynthesizer
+    HAS_HYBRID_SYNTH = True
 except ImportError:
     NeuroGeneticSynthesizer = None
     NeuroInterpreter = None
+    HybridSynthesizer = None
+    HAS_HYBRID_SYNTH = False
     print("[Systemtest] Warning: NeuroGeneticSynthesizer module not found. Skipping RSI features.")
 
 # ==============================================================================
@@ -59,9 +62,16 @@ try:
 except ImportError as e:
     HAS_SYNTHESIS_PACKAGE = False
     print(f"[Systemtest] [INFO] Using inline synthesis (modular package not found: {e})")
-    class BezalelSynthesizer:
-        def synthesize(self, io_examples: List[Dict[str, Any]], timeout: float = 5) -> List[Tuple[str, Any, int, int]]:
-            return []
+    
+    # [RSI-ENABLE] Use NeuroGeneticSynthesizer if available, otherwise dummy
+    if NeuroGeneticSynthesizer:
+        print("[Systemtest] [RSI] Falling back to NeuroGeneticSynthesizer for meaningful synthesis.")
+        BezalelSynthesizer = NeuroGeneticSynthesizer
+    else:
+        class BezalelSynthesizer:
+            def synthesize(self, io_examples: List[Dict[str, Any]], timeout: float = 5, **kwargs) -> List[Tuple[str, Any, int, int]]:
+                return []
+
 
 # ==========================================
 
@@ -131,6 +141,140 @@ try:
 except ImportError:
     HAS_RUST_VM = False
     print("[Systemtest] [INFO] Rust VM not found. Using Python fallback.")
+
+# ==============================================================================
+# MULTI-DOMAIN RSI ENGINE (Inlined for single-file deployment)
+# ==============================================================================
+from abc import ABC, abstractmethod
+
+@dataclass
+class TaskSpec:
+    name: str
+    difficulty: int
+    examples: List[Dict[str, Any]]
+    domain: str
+
+class Domain(ABC):
+    """Abstract base class for RSI domains."""
+    
+    @abstractmethod
+    def name(self) -> str:
+        pass
+
+    @abstractmethod
+    def generate_task(self, rng: random.Random, difficulty: int) -> TaskSpec:
+        pass
+
+    @abstractmethod
+    def evaluate(self, func: Any, task: TaskSpec) -> float:
+        pass
+    
+    @abstractmethod
+    def score(self, output: Any, expected: Any) -> float:
+        pass
+
+class StringDomain(Domain):
+    def name(self) -> str:
+        return "string"
+
+    def generate_task(self, rng: random.Random, difficulty: int) -> TaskSpec:
+        task_types = ["reverse", "repeat", "slice_mid", "concat_self"]
+        t_type = rng.choice(task_types)
+        examples = []
+        for _ in range(5):
+            length = rng.randint(3, 3 + difficulty * 2)
+            inp = "".join(rng.choice("abcdef") for _ in range(length))
+            if t_type == "reverse": out = inp[::-1]
+            elif t_type == "repeat": out = inp * 2
+            elif t_type == "slice_mid": out = inp[len(inp)//2:]
+            elif t_type == "concat_self": out = inp + inp
+            else: out = inp
+            examples.append({"input": inp, "output": out})
+        return TaskSpec(name=f"str_{t_type}", difficulty=difficulty, examples=examples, domain="string")
+
+    def evaluate(self, func: Any, task: TaskSpec) -> float:
+        total = 0.0
+        for ex in task.examples:
+            try: total += self.score(func(ex["input"]), ex["output"])
+            except: pass
+        return total / len(task.examples) if task.examples else 0.0
+
+    def score(self, output: Any, expected: Any) -> float:
+        return 1.0 if output == expected else 0.0
+
+class ListDomain(Domain):
+    def name(self) -> str:
+        return "list"
+
+    def generate_task(self, rng: random.Random, difficulty: int) -> TaskSpec:
+        task_types = ["reverse", "sort", "filter_pos", "double"]
+        t_type = rng.choice(task_types)
+        examples = []
+        for _ in range(5):
+            inp = [rng.randint(-5, 9) for _ in range(rng.randint(3, 3 + difficulty*2))]
+            if t_type == "reverse": out = list(reversed(inp))
+            elif t_type == "sort": out = sorted(inp)
+            elif t_type == "filter_pos": out = [x for x in inp if x > 0]
+            elif t_type == "double": out = [x * 2 for x in inp]
+            else: out = inp
+            examples.append({"input": inp, "output": out})
+        return TaskSpec(name=f"list_{t_type}", difficulty=difficulty, examples=examples, domain="list")
+
+    def evaluate(self, func: Any, task: TaskSpec) -> float:
+        total = 0.0
+        for ex in task.examples:
+            try: total += self.score(func(ex["input"]), ex["output"])
+            except: pass
+        return total / len(task.examples) if task.examples else 0.0
+
+    def score(self, output: Any, expected: Any) -> float:
+        return 1.0 if output == expected else 0.0
+
+class BooleanDomain(Domain):
+    def name(self) -> str:
+        return "boolean"
+
+    def generate_task(self, rng: random.Random, difficulty: int) -> TaskSpec:
+        task_types = ["and", "or", "xor", "nand"]
+        t_type = rng.choice(task_types)
+        examples = []
+        inputs = [(0,0), (0,1), (1,0), (1,1)]
+        rng.shuffle(inputs)
+        for a, b in inputs:
+            if t_type == "and": out = 1 if (a and b) else 0
+            elif t_type == "or": out = 1 if (a or b) else 0
+            elif t_type == "xor": out = 1 if (a ^ b) else 0
+            elif t_type == "nand": out = 0 if (a and b) else 1
+            else: out = a
+            examples.append({"input": [a, b], "output": out})
+        return TaskSpec(name=f"bool_{t_type}", difficulty=difficulty, examples=examples, domain="boolean")
+
+    def evaluate(self, func: Any, task: TaskSpec) -> float:
+        total = 0.0
+        for ex in task.examples:
+            try:
+                inp = ex["input"]
+                res = func(inp[0], inp[1]) if isinstance(inp, list) and len(inp) == 2 else func(inp)
+                total += self.score(res, ex["output"])
+            except: pass
+        return total / len(task.examples) if task.examples else 0.0
+
+    def score(self, output: Any, expected: Any) -> float:
+        try: return 1.0 if bool(output) == bool(expected) else 0.0
+        except: return 0.0
+
+class DomainManager:
+    def __init__(self):
+        self.domains = [StringDomain(), ListDomain(), BooleanDomain()]
+        
+    def sample_domain(self, rng: random.Random) -> Domain:
+        return rng.choice(self.domains)
+
+    def generate_task(self, rng: random.Random, difficulty: int = 1) -> TaskSpec:
+        return self.sample_domain(rng).generate_task(rng, difficulty)
+
+print("[Systemtest] [OK] Multi-Domain RSI Engine (Inlined).")
+
 
 # ==============================================================================
 # USER-INJECTED COMPONENTS (Optimizer & SimulationComponent)
@@ -9994,11 +10138,12 @@ class RuleProposal:
 # ----------------------------
 
 @dataclass
-class TaskSpec:
+class ResearchTaskSpec:
     name: str
     difficulty: int
     baseline: float
     domain: str   # "algorithm" | "systems" | "theory" | "strategy" ...
+
 
 
 class ResearchEnvironment:
@@ -10011,23 +10156,24 @@ class ResearchEnvironment:
 
     def __init__(self, seed: int = 0) -> None:
         self.rng = random.Random(seed)
-        self.tasks: List[TaskSpec] = [
-            TaskSpec("algorithm_design", difficulty=3, baseline=0.35, domain="algorithm"),
-            TaskSpec("systems_optimization", difficulty=4, baseline=0.30, domain="systems"),
-            TaskSpec("verification_pipeline", difficulty=2, baseline=0.40, domain="verification"),
-            TaskSpec("toolchain_speedup", difficulty=5, baseline=0.25, domain="engineering"),
-            TaskSpec("theory_discovery", difficulty=5, baseline=0.28, domain="theory"),
-            TaskSpec("strategy_optimization", difficulty=3, baseline=0.32, domain="strategy"),
+        self.tasks: List[ResearchTaskSpec] = [
+            ResearchTaskSpec("algorithm_design", difficulty=3, baseline=0.35, domain="algorithm"),
+            ResearchTaskSpec("systems_optimization", difficulty=4, baseline=0.30, domain="systems"),
+            ResearchTaskSpec("verification_pipeline", difficulty=2, baseline=0.40, domain="verification"),
+            ResearchTaskSpec("toolchain_speedup", difficulty=5, baseline=0.25, domain="engineering"),
+            ResearchTaskSpec("theory_discovery", difficulty=5, baseline=0.28, domain="theory"),
+            ResearchTaskSpec("strategy_optimization", difficulty=3, baseline=0.32, domain="strategy"),
         ]
         self.global_tool_quality = 0.10
         self.global_kb_quality = 0.10
         self.global_org_quality = 0.10
 
-    def sample_task(self) -> TaskSpec:
+    def sample_task(self) -> ResearchTaskSpec:
         return self.rng.choice(self.tasks)
 
-    def make_observation(self, task: TaskSpec, budget: int,
+    def make_observation(self, task: ResearchTaskSpec, budget: int,
                          phase: str = "research") -> Dict[str, Any]:
+
         return {
             "task": task.name,
             "domain": task.domain,
@@ -14664,7 +14810,14 @@ class HRMSidecar:
                 final_code = code_str.replace("def f(n):", f"def {name}(n):")
                 final_code = final_code.replace("f(", f"{name}(")
                 
-                print(f"  [INVENTION] {name}: {final_code.splitlines()[2]} (Tzimtzum Verified)")
+                # [FIX] Handle single-line code from NeuroGen
+                code_lines = final_code.splitlines()
+                summary_line = code_lines[2] if len(code_lines) > 2 else (code_lines[0] if code_lines else "Empty Code")
+                print(f"  [INVENTION] {name}: {summary_line} (Tzimtzum Verified)")
+                # The original code returned `(ast_obj, k, v)` as the second element.
+                # The instruction's `meta` is ambiguous, so we'll keep the original structure.
+                meta = (ast_obj, k, v)
+                return [(final_code, meta)]
                 
                 # PERSISTENCE (RSI PROOF): Save checkpoint
                 try:
@@ -15309,23 +15462,44 @@ def orchestrator_main():
             
             # Check stagnation
             is_stagnant = False
-            if orch._detect_stagnation(window=stagnation_window, threshold=0.01):
+            # [RSI-CONFIG] Higher threshold (0.5) to ensure RSI triggers during short tests
+            if orch._detect_stagnation(window=stagnation_window, threshold=0.5):
                  print(f"STAGNATION DETECTED: round={i}, window={stagnation_window}")
                  is_stagnant = True
+
+            
             
             # HRM Sidecar Call - Use REAL synthesis with I/O examples
             if is_stagnant:
-                # Generate I/O examples for algorithm discovery (e.g., Fibonacci)
-                def fib(n): return n if n <= 1 else fib(n-1) + fib(n-2)
-                io_examples = [{'input': x, 'output': fib(x)} for x in range(7)]
-                
-                print(f"[HRM-Sidecar] Attempting REAL synthesis on Fibonacci I/O examples...")
-                concepts = hrm_sidecar.dream(
-                    experiences_as_code=[],
-                    io_examples=io_examples,
-                    deadline=time.time() + 30,  # 30 second timeout
-                    task_id="fibonacci_discovery",
-                )
+                # [MULTI-DOMAIN RSI] Sample a domain and generate a task
+                if DomainManager:
+                    if not hasattr(orch, 'domain_manager'): 
+                        orch.domain_manager = DomainManager()
+                    
+                    # 1. Sample Domain & Generate Task
+                    task_spec = orch.domain_manager.generate_task(env.rng, difficulty=2)
+                    task_name = task_spec.name
+                    io_examples = task_spec.examples
+                    
+                    print(f"[RSI-Domain] 🌍 Stagnation Broker -> Generated Task: {task_name} (Domain: {task_spec.domain})")
+                else:
+                    # Fallback if module missing
+                    task_spec = orch.problem_gen.evolve_task(env.rng, current_elites=[])
+                    task_name = task_spec.name
+                    io_examples = [] # ... legacy loading logic ...
+
+                if not io_examples:
+                     print(f"[HRM-Sidecar] Task generation failed. Skipping.")
+                else:
+                    print(f"[HRM-Sidecar] Attempting REAL synthesis on [{task_name}] with {len(io_examples)} examples...")
+                    concepts = hrm_sidecar.dream(
+                        experiences_as_code=[],
+                        io_examples=io_examples,
+                        deadline=time.time() + 30,  # 30 second timeout
+                        task_id=task_name,
+                    )
+
+
                 if concepts:
                     print(f"[HRM-Sidecar] Discovered {len(concepts)} concepts!")
                     hrm_sidecar.inject(concepts)

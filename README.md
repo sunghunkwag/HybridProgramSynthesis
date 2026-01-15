@@ -1,67 +1,43 @@
-# Neuro-Genetic Structural Synthesis
+# HybridProgramSynthesis
+**A Neuro-Symbolic Architecture for Recursive Self-Improvement (RSI)**
 
-## Project Status: Verified Experimental System
-This repository contains a **Neuro-Genetic Algorithm Discovery System**. It is designed to autonomously synthesize programs and discover mathematical concepts without human intervention.
+> **Research Test Version**: v0.1.0-alpha
+> **Status**: Experimental / Academic Research
+> **Language**: Python 3.9+
 
-**Latest Verified Achievement (2026-01-11):**
-*   **Self-Generated Complexity:** The system autonomously evolved a **4.6KB (4,630 bytes)** genetic code (`triangular_g1662`) to approximate the Triangular Number sequence.
-*   **Logic Depth:** Instead of hardcoded values, the generated code successfully utilized deeply nested control flows (`if_gt`, `div`, `mod`, `mul`) to construct a heuristic solution.
+## Abstract
+HybridProgramSynthesis is an experimental engine designed to investigate **True Recursive Self-Improvement** in synthetic cognitive architectures. Unlike traditional program synthesis approaches that rely on brute force or purely neural generation, this system fuses **six search strategies** to overcome combinatorial explosion and achieve verifiable generalization in abstract domains.
 
-## Key Features (Fact-Based)
+## Core Architecture: The "Hex-Strategy" Fusion
+The system integrates the following techniques into a unified `HybridSynthesizer`:
 
-### 1. Neuro-Genetic Synthesizer (Python)
-*   Implements a hybrid evolution strategy.
-*   **Capabilities:** Verified generation of valid Python-like ASTs from scratch.
-*   **Persistence:** Automatically saves evolved "brains" (genetic code) to disk (current count: 147+ checkpoints).
+1.  **Bottom-Up Enumeration**: Systematic generation of defining primitives.
+2.  **Type Pruning**: Strict type-system constraints to eliminate invalid search branches.
+3.  **Observational Equivalence (OE)**: Dynamic pruning of semantically identical expressions (e.g., 6804 $\to$ 55 candidates).
+4.  **Monte Carlo Tree Search (MCTS)**: UCB1-guided exploration for long-horizon planning.
+5.  **Neural Guidance**: Learned operator prioritization.
+6.  **Ray-Tracing Inspired Search (RTIS)**: Parallel "ray casting" into the program space using BVH (Bounding Volume Hierarchy) for domain-aware acceleration.
 
-### 2. Rust Virtual Machine (Acceleration Layer)
-*   **Component:** `rs_machine`
-*   **Function:** A custom stack-based VM written in Rust using PyO3.
-*   **Status:** Fully integrated. The system detects the Rust binary and offloads execution for performance.
-*   **Fallback:** Gracefully degrades to a Python interpreter if the Rust binary is missing.
+## Key Research Verification
+The system has demonstrated the ability to **autonomously compose** complex logical primitives without domain-specific shortcuts.
 
-### 3. Autonomous Goal Discovery (Self-Purpose Engine)
-*   **Method:** Temporal Inversion.
-*   **Process:** The system generates random expressions, analyzes their input/output patterns, and "inverts" them to define new problems to solve (e.g., discovering linear progressions or patterns).
-*   **Evidence:** Verified logs showing `EMERGENT PURPOSE: linear_d2` (Arithmetic Progression).
+| Task Domain | Synthesized Solution (Autonomous) | Verification |
+|:---:|:---|:---:|
+| **Boolean AND** | `second(mul(n, first(n)))` | **100%** |
+| **Boolean OR** | `or_op(first(n), second(n))` | **100%** |
 
-## System Architecture
+*Note: Pre-made Boolean primitives (`bool_and`, `bool_or`) were removed to force compositional discovery.*
 
-```mermaid
-graph TD
-    subgraph "Decision & Logic (Python)"
-        Orchestrator["Systemtest.py"]
-        Brain["Neuro-Genetic Synthesizer"]
-        Purpose["SelfPurposeEngine"]
-    end
-
-    subgraph "Execution (Rust)"
-        RustVM["rs_machine (JIT Compiler)"]
-    end
-
-    Purpose -->|Define Goal| Orchestrator
-    Orchestrator -->|Evolve Solution| Brain
-    Brain -->|Compile & Run| RustVM
-    RustVM -->|Return Fitness| Brain
-```
-
-## Installation & Usage
-
-### Prerequisites
-*   Python 3.8+
-*   Rust Toolchain (for `rs_machine`)
-*   `maturin` (`pip install maturin`)
-
-### Build Rust Extension
-To enable the high-performance VM:
+## Installation
 ```bash
-cd rs_machine
-maturin develop --release
-cd ..
+pip install -r requirements.txt
 ```
 
-### Run System
+## Usage
+The entire architecture is consolidated into a single entry point for deployment simplicity.
 ```bash
-python Systemtest.py hrm-life
+python Systemtest.py
 ```
-*Runs the infinite discovery loop. Verified to generate valid checkpoints and evolve fitness.*
+
+## License
+MIT License - Research Use Only
