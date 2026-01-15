@@ -1227,9 +1227,13 @@ class NeuroGeneticSynthesizer:
                         try:
                             sig = inspect.signature(local_ns[fn_name])
                             arity = len(sig.parameters)
+                            # [FIX] Skip functions with arity 0 (causes randrange crash)
+                            if arity < 1:
+                                continue
                             self.op_arities[fn_name] = arity
                         except:
                             self.op_arities[fn_name] = 1  # Default arity
+
                         
                         loaded_count += 1
                 except Exception:
