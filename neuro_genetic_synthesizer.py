@@ -1075,6 +1075,14 @@ class MetaController:
         self.params = MetaParams(mutation_rate=0.3, crossover_prob=0.7, population_size=200)
         self.stagnation_counter = 0
         self.last_best_fitness = -1.0
+        self.total_tasks_solved = 0  # [RSI] Track overall progress
+        
+    def reset_for_new_task(self):
+        """[FIX] Reset stagnation tracking for new task - each task has independent fitness scale."""
+        self.stagnation_counter = 0
+        self.last_best_fitness = -1.0
+        # Keep params and history for long-term learning
+
         
     def update(self, current_best_fitness: float):
         self.history.append(current_best_fitness)
@@ -1093,11 +1101,25 @@ class MetaController:
             self.params.crossover_prob = max(0.1, self.params.crossover_prob * 0.8)
             print(f"[RSI-Meta] Stagnation detected ({self.stagnation_counter}). Increasing Mutation to {self.params.mutation_rate:.2f}")
             
+            # [FIX] Adaptive threshold lowering after prolonged stagnation
+            if self.stagnation_counter > 100 and self.stagnation_counter % 100 == 0:
+                self.last_best_fitness *= 0.95  # Lower the bar by 5%
+                print(f"[RSI-Meta] Lowering best fitness threshold to {self.last_best_fitness:.2f}")
+            
+            # [FIX] Hard reset after extreme stagnation
+            if self.stagnation_counter > 500 and self.stagnation_counter % 500 == 0:
+                print(f"[RSI-Meta] HARD RESET triggered at stagnation {self.stagnation_counter}")
+                self.stagnation_counter = 0
+                self.last_best_fitness = 0.0  # Reset baseline
+                self.params.mutation_rate = 0.5  # Reset mutation
+                self.params.crossover_prob = 0.5  # Reset crossover
+            
         elif self.stagnation_counter == 0 and len(self.history) > 1:
             # Progressing: Stabilize (Exploitation)
             self.params.mutation_rate = max(0.1, self.params.mutation_rate * 0.9)
             self.params.crossover_prob = min(0.9, self.params.crossover_prob * 1.1)
             # print(f"[RSI-Meta] Progress detected. Stabilizing Mutation to {self.params.mutation_rate:.2f}")
+
 
     def get_params(self) -> MetaParams:
         return self.params
@@ -1323,6 +1345,9 @@ class NeuroGeneticSynthesizer:
 
     def synthesize(self, io_pairs: List[Dict[str, Any]], deadline=None, task_id="", task_params=None, **kwargs) -> List[Tuple[str, Expr, float, float]]:
 
+        # [FIX] Reset stagnation tracking for each new task
+        self.meta.reset_for_new_task()
+
         # [STRONG RSI] Track current domain for failure analysis
         # Try to detect domain from task_id or io_pairs
         domain = kwargs.get("domain", None)
@@ -1334,6 +1359,7 @@ class NeuroGeneticSynthesizer:
             elif "bool" in task_id:
                 domain = "boolean"
         self.current_domain = domain
+
 
         # 1. Neural Guidance (Priors)
         priors = {op: 1.0 for op in self.ops} 
