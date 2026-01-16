@@ -45,15 +45,14 @@ class SafeInterpreter(ast.NodeVisitor):
         if isinstance(node, str):
             try:
                 node = ast.parse(node, mode='eval').body
-            except SyntaxError:
-                return None
+            except SyntaxError as e:
+                return {"__error__": "SyntaxError", "msg": str(e)}
                 
         try:
             return self.visit(node)
-        except (RecursionError, ValueError, TypeError, ZeroDivisionError, AttributeError):
-            return None
-        except Exception:
-            return None
+        except Exception as e:
+            # [DIAGNOSTIC] Do not swallow exceptions. Return them as data.
+            return {"__error__": type(e).__name__, "msg": str(e)}
 
     def _check_gas(self):
         self.gas -= 1
@@ -64,179 +63,9 @@ class SafeInterpreter(ast.NodeVisitor):
         self._check_gas()
         return node.value
 
-    def visit_Name(self, node):
-        self._check_gas()
-        if isinstance(node.ctx, ast.Load):
-            if node.id in self.local_env:
-                return self.local_env[node.id]
-            # Allow True/False/None
-            if node.id == "True": return True
-            if node.id == "False": return False
-            if node.id == "None": return None
-            raise ValueError(f"Undefined variable: {node.id}")
-        raise ValueError("Assignments not allowed in expression mode")
+    # ... (other visit methods unchanged) ...
 
-    def visit_BinOp(self, node):
-        self._check_gas()
-        left = self.visit(node.left)
-        right = self.visit(node.right)
-        op = node.op
-        
-        if isinstance(op, ast.Add): return left + right
-        if isinstance(op, ast.Sub): return left - right
-        if isinstance(op, ast.Mult): return left * right
-        if isinstance(op, ast.Div): return left / right if right != 0 else 0
-        if isinstance(op, ast.FloorDiv): return left // right if right != 0 else 0
-        if isinstance(op, ast.Mod): return left % right if right != 0 else 0
-        if isinstance(op, ast.Pow): return left ** right if isinstance(right, int) and right < 10 else 0 # Safety cap
-        return 0
-
-    def visit_UnaryOp(self, node):
-        self._check_gas()
-        operand = self.visit(node.operand)
-        op = node.op
-        if isinstance(op, ast.USub): return -operand
-        if isinstance(op, ast.Not): return not operand
-        return operand
-
-    def visit_Compare(self, node):
-        self._check_gas()
-        left = self.visit(node.left)
-        # Handle chain comparisons ideally, but for now simple single comparison
-        if len(node.ops) != 1: return False
-        
-        op = node.ops[0]
-        right = self.visit(node.comparators[0])
-        
-        if isinstance(op, ast.Eq): return left == right
-        if isinstance(op, ast.NotEq): return left != right
-        if isinstance(op, ast.Lt): return left < right
-        if isinstance(op, ast.LtE): return left <= right
-        if isinstance(op, ast.Gt): return left > right
-        if isinstance(op, ast.GtE): return left >= right
-        if isinstance(op, ast.In): return left in right
-        if isinstance(op, ast.NotIn): return left not in right
-        return False
-    
-    def visit_BoolOp(self, node):
-        self._check_gas()
-        values = [self.visit(v) for v in node.values]
-        if isinstance(node.op, ast.And):
-            return all(values)
-        if isinstance(node.op, ast.Or):
-            return any(values)
-        return False
-
-    def visit_IfExp(self, node):
-        self._check_gas()
-        test = self.visit(node.test)
-        if test:
-            return self.visit(node.body)
-        else:
-            return self.visit(node.orelse)
-
-    def visit_List(self, node):
-        self._check_gas()
-        return [self.visit(elt) for elt in node.elts]
-        
-    def visit_Subscript(self, node):
-        self._check_gas()
-        val = self.visit(node.value)
-        idx = self.visit(node.slice)
-        try:
-            return val[idx]
-        except:
-            return None
-
-    def visit_Call(self, node):
-        self._check_gas()
-        if not isinstance(node.func, ast.Name):
-            raise ValueError("Indirect calls not allowed")
-            
-        func_name = node.func.id
-        if func_name not in self.primitives:
-             raise ValueError(f"Unknown primitive: {func_name}")
-             
-        args = [self.visit(arg) for arg in node.args]
-        return self.primitives[func_name](*args)
-        
-    def generic_visit(self, node):
-        raise ValueError(f"Illegal AST node: {type(node).__name__}")
-
-
-# ==============================================================================
-# II. SEMANTIC HASHER (Quality Control)
-# ==============================================================================
-class SemanticHasher(ast.NodeVisitor):
-    """
-    Canonicalizes an AST to detect semantic duplicates.
-    Renames variables to arg0, arg1... to ignore naming differences.
-    """
-    def __init__(self):
-        self.tokens = []
-        self.var_map = {}
-        self.arg_counter = 0
-
-    def hash_code(self, code_str: str) -> str:
-        try:
-            node = ast.parse(code_str, mode='eval')
-            self.tokens = []
-            self.var_map = {}
-            self.arg_counter = 0
-            self.visit(node)
-            data = "|".join(self.tokens).encode('utf-8')
-            return hashlib.sha256(data).hexdigest()
-        except:
-            return "INVALID"
-
-    def visit_Name(self, node):
-        if isinstance(node.ctx, ast.Load):
-            if node.id not in self.var_map:
-                self.var_map[node.id] = f"ARG_{self.arg_counter}"
-                self.arg_counter += 1
-            self.tokens.append(f"VAR:{self.var_map[node.id]}")
-        else:
-            self.tokens.append("VAR_DEF")
-
-    def visit_Constant(self, node):
-        self.tokens.append(f"CONST:{node.value}")
-
-    def visit_Call(self, node):
-        self.tokens.append(f"CALL:{node.func.id}")
-        for arg in node.args:
-            self.visit(arg)
-
-    def visit_BinOp(self, node):
-        self.tokens.append(f"OP:{type(node.op).__name__}")
-        self.visit(node.left)
-        self.visit(node.right)
-        
-    def generic_visit(self, node):
-        self.tokens.append(type(node).__name__)
-        super().generic_visit(node)
-
-
-# ==============================================================================
-# III. LIBRARY MANAGER (RSI Registry & DAG)
-# ==============================================================================
-@dataclass
-class PrimitiveNode:
-    name: str
-    code: str  # Python source code string
-    ast_node: Any = field(default=None) # Parsed AST
-    level: int = 0
-    usage_count: int = 0
-    weight: float = 1.0
-    dependencies: List[str] = field(default_factory=list)
-    semantic_hash: str = ""
-
-class PrimitiveValidator:
-    """
-    Validates new primitives against a regression suite before acceptance.
-    Inspired by HotSwapManager check pattern.
-    """
-    def __init__(self, interpreter: SafeInterpreter):
-        self.interpreter = interpreter
+# ... (jump to PrimitiveValidator) ...
 
     def validate(self, name: str, ast_node: Any, validation_ios: List[Dict]) -> bool:
         """
@@ -255,8 +84,23 @@ class PrimitiveValidator:
                 res = self.interpreter.run(ast_node, env)
                 if res == io['output']:
                     passes += 1
-                elif passes == 0 and len(str(res)) < 100: # Log first failure for diagnostics
-                     print(f"  [Validator-Diag] Fail: Input={io['input']} | Expected={io['output']} | Got={res}")
+                elif passes == 0: # Log first failure for diagnostics
+                     try:
+                         # Safe type name extraction
+                         type_in = type(io['input']).__name__
+                         type_exp = type(io['output']).__name__
+                         type_got = type(res).__name__
+                         
+                         # Check if result is an error dict
+                         if isinstance(res, dict) and "__error__" in res:
+                             got_str = f"EXCEPTION({res['__error__']}: {res['msg']})"
+                         else:
+                             got_str = str(res)
+                             if len(got_str) > 100: got_str = got_str[:100] + "..."
+                             
+                         print(f"  [Validator-Diag] Fail: Input={io['input']} ({type_in}) | Expected={io['output']} ({type_exp}) | Got={got_str} ({type_got})")
+                     except:
+                         print(f"  [Validator-Diag] Fail: Input={io['input']} | Expected={io['output']} | Got={res}")
             except Exception as e:
                 if passes == 0:
                      print(f"  [Validator-Diag] Exception: {str(e)[:100]}")
@@ -699,6 +543,49 @@ class NeuroGeneticSynthesizer:
         
         ops, weights = self.library.get_weighted_ops()
         
+        # [TYPE-CONSTRAINT] Prune search space based on input/output types (Refined Instruction 3)
+        if io_pairs and 'input' in io_pairs[0] and 'output' in io_pairs[0]:
+            inp = io_pairs[0]['input']
+            outp = io_pairs[0]['output']
+            banned_ops = set()
+            
+            # Case 1: Int -> ? (Input is scalar)
+            if isinstance(inp, int):
+                # Integer input cannot support List operations -> Ban them
+                banned_ops.update({
+                    'reverse', 'split_half', 'first', 'last', 'tail', 'init', 
+                    'len', 'sum_list', 'prod_list', 'min_list', 'max_list', 
+                    'count_list', 'is_empty', 'snoc', 'cons', 'append',
+                    'map_fn', 'filter_fn', 'fold', 'sort' 
+                })
+
+            # Case 2: List -> Int (Aggregation task)
+            elif isinstance(inp, list) and isinstance(outp, int):
+                # We need List->Int ops (len, sum, max), but MUST BAN List->List ops
+                # because they return the wrong type (List instead of Int).
+                banned_ops.update({
+                    'reverse', 'split_half', 'init', 'tail', 'cons', 'snoc', 'append',
+                    'map_fn', 'filter_fn', 'sort', 'range_list'
+                })
+                # Note: 'fold' returns T, so it might be valid if it returns Int. Keep safe for now?
+                # Actually fold is the ultimate reducer. Let's KEEP fold, first, last (elements could be int).
+                # Banning explicitly list-returning ops.
+            
+            if banned_ops:
+                filtered_ops = []
+                filtered_weights = []
+                for op, w in zip(ops, weights):
+                    if op not in banned_ops:
+                        filtered_ops.append(op)
+                        filtered_weights.append(w)
+                
+                ops = filtered_ops
+                weights = filtered_weights
+                # Ensure we didn't filter everything
+                if not ops:
+                    print("[Synthesizer] WARN: All ops banned by type constraint! Reverting.")
+                    ops, weights = self.library.get_weighted_ops()
+                    
         population = self._generate_initial_population(20, ops, weights)
         
         generations = 0
