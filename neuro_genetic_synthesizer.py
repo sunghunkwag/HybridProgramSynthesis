@@ -16,7 +16,9 @@ from typing import List, Dict, Any, Tuple, Optional, Callable, Set, Union
 # ==============================================================================
 # CONFIGURATION
 # ==============================================================================
-MAX_GAS = 1000  # Maximum operations per execution
+MAX_GAS = 10000  # Maximum operations per execution (increased for complex algorithms)
+MAX_RECURSION_DEPTH = 50  # Maximum recursion depth for safe bounded recursion
+MAX_LIST_SIZE = 100  # Maximum list size for bounded iteration
 REGISTRY_FILE = "rsi_primitive_registry.json"
 
 # ==============================================================================
@@ -273,25 +275,146 @@ class LibraryManager:
         self.load_registry()
 
     def _register_base_primitives(self):
+        # =======================================================================
+        # BASE PRIMITIVES - Level 0
+        # Extended for real algorithm discovery (sorting, searching, recursion)
+        # =======================================================================
         base_funcs = {
+            # --- Arithmetic ---
             'add': (lambda a, b: a + b, 0),
             'sub': (lambda a, b: a - b, 0),
             'mul': (lambda a, b: a * b, 0),
-            'div': (lambda a, b: int(a/b) if b!=0 else 0, 0),
-            'reverse': (lambda x: x[::-1] if isinstance(x, (str, list)) else x, 0),
-            'first': (lambda x: x[0] if isinstance(x, (list, tuple, str)) and len(x)>0 else None, 0),
-            'len': (lambda x: len(x) if isinstance(x, (str, list, tuple)) else 0, 0),
+            'div': (lambda a, b: int(a / b) if b != 0 else 0, 0),
+            'mod': (lambda a, b: a % b if b != 0 else 0, 0),
+            'neg': (lambda a: -a, 0),
+            'abs_val': (lambda a: abs(a) if isinstance(a, (int, float)) else a, 0),
+            'min_val': (lambda a, b: min(a, b), 0),
+            'max_val': (lambda a, b: max(a, b), 0),
+            
+            # --- Comparison Operators ---
             'eq': (lambda a, b: a == b, 0),
+            'neq': (lambda a, b: a != b, 0),
+            'lt': (lambda a, b: a < b, 0),
+            'gt': (lambda a, b: a > b, 0),
+            'lte': (lambda a, b: a <= b, 0),
+            'gte': (lambda a, b: a >= b, 0),
+            
+            # --- Boolean Logic ---
             'not_op': (lambda a: not a, 0),
             'and_op': (lambda a, b: a and b, 0),
             'or_op': (lambda a, b: a or b, 0),
-            'if_gt': (lambda a, b, c, d: c if a > b else d, 0)
+            
+            # --- Conditional ---
+            'if_then_else': (lambda cond, then_val, else_val: then_val if cond else else_val, 0),
+            'if_gt': (lambda a, b, c, d: c if a > b else d, 0),
+            'if_lt': (lambda a, b, c, d: c if a < b else d, 0),
+            
+            # --- List/String Access ---
+            'len': (lambda x: len(x) if isinstance(x, (str, list, tuple)) else 0, 0),
+            'first': (lambda x: x[0] if isinstance(x, (list, tuple, str)) and len(x) > 0 else None, 0),
+            'last': (lambda x: x[-1] if isinstance(x, (list, tuple, str)) and len(x) > 0 else None, 0),
+            'get': (lambda lst, i: lst[int(i)] if isinstance(lst, (list, str)) and 0 <= int(i) < len(lst) else None, 0),
+            'tail': (lambda x: x[1:] if isinstance(x, (list, str)) and len(x) > 0 else ([] if isinstance(x, list) else ''), 0),
+            'init': (lambda x: x[:-1] if isinstance(x, (list, str)) and len(x) > 0 else ([] if isinstance(x, list) else ''), 0),
+            'reverse': (lambda x: x[::-1] if isinstance(x, (str, list)) else x, 0),
+            'is_empty': (lambda x: len(x) == 0 if isinstance(x, (list, str, tuple)) else True, 0),
+            
+            # --- List Construction ---
+            'cons': (lambda x, lst: [x] + lst if isinstance(lst, list) else [x], 0),
+            'snoc': (lambda lst, x: lst + [x] if isinstance(lst, list) else [x], 0),
+            'concat': (lambda a, b: a + b if isinstance(a, (list, str)) and isinstance(b, (list, str)) else a, 0),
+            'take': (lambda n, lst: lst[:min(int(n), len(lst))] if isinstance(lst, (list, str)) else lst, 0),
+            'drop': (lambda n, lst: lst[min(int(n), len(lst)):] if isinstance(lst, (list, str)) else lst, 0),
+            'slice_list': (lambda lst, s, e: lst[int(s):int(e)] if isinstance(lst, (list, str)) else lst, 0),
+            'singleton': (lambda x: [x], 0),
+            'range_list': (lambda n: list(range(min(max(0, int(n)), 100))), 0),  # Bounded to 100
+            
+            # --- List Transformation (Bounded Iteration - Max 100) ---
+            'map_double': (lambda lst: [x * 2 for x in lst[:100]] if isinstance(lst, list) else lst, 0),
+            'map_square': (lambda lst: [x * x for x in lst[:100]] if isinstance(lst, list) else lst, 0),
+            'map_negate': (lambda lst: [-x for x in lst[:100]] if isinstance(lst, list) else lst, 0),
+            'filter_positive': (lambda lst: [x for x in lst[:100] if x > 0] if isinstance(lst, list) else lst, 0),
+            'filter_negative': (lambda lst: [x for x in lst[:100] if x < 0] if isinstance(lst, list) else lst, 0),
+            'filter_even': (lambda lst: [x for x in lst[:100] if x % 2 == 0] if isinstance(lst, list) else lst, 0),
+            'filter_odd': (lambda lst: [x for x in lst[:100] if x % 2 == 1] if isinstance(lst, list) else lst, 0),
+            
+            # --- Aggregation (Bounded - Max 100) ---
+            'sum_list': (lambda lst: sum(lst[:100]) if isinstance(lst, list) else 0, 0),
+            'prod_list': (lambda lst: self._safe_product(lst[:100]) if isinstance(lst, list) else 1, 0),
+            'min_list': (lambda lst: min(lst[:100]) if isinstance(lst, list) and len(lst) > 0 else None, 0),
+            'max_list': (lambda lst: max(lst[:100]) if isinstance(lst, list) and len(lst) > 0 else None, 0),
+            'count_list': (lambda lst: len(lst) if isinstance(lst, list) else 0, 0),
+            
+            # --- Sorting (Built-in, bounded) ---
+            'sort_asc': (lambda lst: sorted(lst[:100]) if isinstance(lst, list) else lst, 0),
+            'sort_desc': (lambda lst: sorted(lst[:100], reverse=True) if isinstance(lst, list) else lst, 0),
+            
+            # --- Search ---
+            'elem_in': (lambda x, lst: x in lst if isinstance(lst, (list, str)) else False, 0),
+            'index_of': (lambda x, lst: lst.index(x) if isinstance(lst, list) and x in lst else -1, 0),
+            
+            # --- Insertion Sort Building Blocks ---
+            'insert_sorted': (lambda x, lst: self._insert_sorted(x, lst), 0),
+            
+            # --- Merge Sort Building Blocks ---
+            'split_half': (lambda lst: (lst[:len(lst)//2], lst[len(lst)//2:]) if isinstance(lst, list) else ([], []), 0),
+            'merge_sorted': (lambda a, b: self._merge_sorted(a, b), 0),
         }
         
-        self.runtime_primitives = {} # Callable map for Interpreter
+        self.runtime_primitives = {}  # Callable map for Interpreter
         for name, (func, level) in base_funcs.items():
             self.runtime_primitives[name] = func
             self.primitives[name] = PrimitiveNode(name=name, code="<native>", level=0, usage_count=100)
+
+    def _safe_product(self, lst: list) -> int:
+        """Compute product of list elements with overflow protection."""
+        if not lst:
+            return 1
+        result = 1
+        for x in lst[:100]:  # Bounded iteration
+            result *= x
+            if abs(result) > 10**15:  # Overflow protection
+                return result
+        return result
+
+    def _insert_sorted(self, x, lst: list) -> list:
+        """Insert element x into a sorted list maintaining order."""
+        if not isinstance(lst, list):
+            return [x]
+        if len(lst) > 100:  # Safety bound
+            lst = lst[:100]
+        result = []
+        inserted = False
+        for elem in lst:
+            if not inserted and x <= elem:
+                result.append(x)
+                inserted = True
+            result.append(elem)
+        if not inserted:
+            result.append(x)
+        return result
+
+    def _merge_sorted(self, a: list, b: list) -> list:
+        """Merge two sorted lists into one sorted list."""
+        if not isinstance(a, list):
+            a = []
+        if not isinstance(b, list):
+            b = []
+        # Safety bounds
+        a = a[:50]
+        b = b[:50]
+        result = []
+        i, j = 0, 0
+        while i < len(a) and j < len(b):
+            if a[i] <= b[j]:
+                result.append(a[i])
+                i += 1
+            else:
+                result.append(b[j])
+                j += 1
+        result.extend(a[i:])
+        result.extend(b[j:])
+        return result
 
     def register_new_primitive(self, name: str, code: str, interpreter: SafeInterpreter, validation_ios: List[Dict] = None) -> bool:
         """
