@@ -37,29 +37,29 @@
   "concept_17": {
     "code": "reverse(and_op(len(n), n))",
     "level": 1,
-    "usage": 2,
-    "weight": 5.5,
+    "usage": 3,
+    "weight": 6.050000000000001,
     "hash": "a7d3789f9f2628a60426cc76cbf6da29edac085ab6cd38c9c85a6f6c861bf420"
   },
   "concept_18": {
     "code": "reverse(first(reverse(n)))",
     "level": 1,
-    "usage": 4,
-    "weight": 6.655000000000001,
+    "usage": 5,
+    "weight": 7.320500000000002,
     "hash": "d626de20f6272a1c9afcc0f35c6eedc825cde6b232ee7433ffc745252a3fced0"
   },
   "concept_19": {
     "code": "reverse(reverse(reverse(n)))",
     "level": 1,
-    "usage": 3,
-    "weight": 6.050000000000001,
+    "usage": 4,
+    "weight": 6.655000000000001,
     "hash": "27b1a57ebbd13e9268813e17bb8e9fbad218339e26bcf0b5f5c3bf92350b009b"
   },
   "concept_20": {
     "code": "len(mul(len(n), or_op(n, n)))",
     "level": 1,
-    "usage": 4,
-    "weight": 6.655000000000001,
+    "usage": 5,
+    "weight": 7.320500000000002,
     "hash": "6d4325edab049ee6e497430d73b112afad6c0867241094e98cd6b838383c5442"
   },
   "concept_21": {
@@ -156,8 +156,8 @@
   "concept_34": {
     "code": "len(reverse(reverse(n)))",
     "level": 1,
-    "usage": 2,
-    "weight": 5.5,
+    "usage": 3,
+    "weight": 6.050000000000001,
     "hash": "396fe2638b9ad923b1412f0685109ec22ca31e8cfe1a04053d8b147060b46c8d"
   },
   "concept_35": {
@@ -212,8 +212,8 @@
   "concept_42": {
     "code": "not_op(len(first(n)))",
     "level": 1,
-    "usage": 2,
-    "weight": 5.5,
+    "usage": 3,
+    "weight": 6.050000000000001,
     "hash": "af50055f4d262d0d5013335e522d82ea100306a85216a4cce067432ae70e1b18"
   },
   "concept_43": {
@@ -310,8 +310,8 @@
   "concept_56": {
     "code": "not_op(concept_24(n, concept_29(n, n)))",
     "level": 3,
-    "usage": 2,
-    "weight": 5.5,
+    "usage": 3,
+    "weight": 6.050000000000001,
     "hash": "409a4debc961f2229975b65720608877527045bd8369cd98b1699ee21aab5229"
   },
   "concept_57": {
@@ -345,8 +345,8 @@
   "concept_61": {
     "code": "not_op(concept_40(n, concept_50(n, n)))",
     "level": 6,
-    "usage": 1,
-    "weight": 5.0,
+    "usage": 2,
+    "weight": 5.5,
     "hash": "23fe9d8d9c045051c42811a3f100baa499147c30c9e007ae4757a174ac11af36"
   },
   "concept_62": {
@@ -376,5 +376,47 @@
     "usage": 1,
     "weight": 5.0,
     "hash": "e7ef8d0920ed45bc381c0def2fcf724d0913a7af1b9f0cd031fc162a13c9b273"
+  },
+  "concept_110": {
+    "code": "is_empty(concept_56(concept_61(concept_42(n, n), concept_19(n, n)), n))",
+    "level": 7,
+    "usage": 2,
+    "weight": 5.5,
+    "hash": "604bd382eb7ca10886590c606b6966f5ac08d3571ce448e822272ec59852005b"
+  },
+  "concept_111": {
+    "code": "max_list(max_val(n, n))",
+    "level": 1,
+    "usage": 1,
+    "weight": 5.0,
+    "hash": "9a2a7045aa31e96db2d780b54673f061659e6eb924f28c23d52d52b67802edc7"
+  },
+  "concept_112": {
+    "code": "or_op(concept_110(n, n), reverse(n))",
+    "level": 8,
+    "usage": 1,
+    "weight": 5.0,
+    "hash": "263d22612ba22b9d2e797be070288f0910879f3e155695899a47f4d4efaba277"
+  },
+  "concept_113": {
+    "code": "prod_list(concept_20(n, n))",
+    "level": 2,
+    "usage": 1,
+    "weight": 5.0,
+    "hash": "14a0e6789e75fc3839491d8067de954ca6c54ec0ce94777208f5e2cb1312a1c7"
+  },
+  "concept_114": {
+    "code": "sum_list(concat(n, concept_18(concept_34(n, n), n)))",
+    "level": 2,
+    "usage": 1,
+    "weight": 5.0,
+    "hash": "a5ef3a450e458ef627b068115d9e4bc988def01b865bb1e22bca9c3b709609be"
+  },
+  "concept_115": {
+    "code": "neq(n, concept_17(n, n))",
+    "level": 2,
+    "usage": 1,
+    "weight": 5.0,
+    "hash": "95b518195f27f1272fddc703c95326232842fa9d330bf484420907afec9ab689"
   }
 }
