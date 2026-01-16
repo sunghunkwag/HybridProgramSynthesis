@@ -15893,9 +15893,50 @@ class HRMSidecar:
             adjustments = self.failure_analyzer.get_strategy_adjustments()
             if adjustments:
                 print(f"  > [RSI-Meta] Strategy adjustments recommended: {adjustments}")
+                
+                # [TRUE RSI] ACTUALLY APPLY THE ADJUSTMENTS (not just log!)
+                self._apply_strategy_adjustments(adjustments)
+                
         print(f"  > [RSI-Meta] FAILURE: Tested {sum(len(self._enumerate_expressions(s)) for s in range(1, max_size + 1))} programs, none passed.")
         
         return None
+
+    def _apply_strategy_adjustments(self, adjustments: Dict[str, Any]):
+        """
+        [TRUE RSI] Actually apply meta-reasoning adjustments to modify search behavior.
+        This is the critical connection between analysis and action.
+        """
+        applied = []
+        
+        # Apply weight adjustments to MetaHeuristic
+        for key, value in adjustments.items():
+            if key.startswith('reduce_weight_'):
+                op_name = key.replace('reduce_weight_', '')
+                if hasattr(self.meta_heuristic, 'weights') and op_name in self.meta_heuristic.weights:
+                    old_val = self.meta_heuristic.weights[op_name]
+                    self.meta_heuristic.weights[op_name] *= value  # Reduce by factor
+                    applied.append(f"weight[{op_name}]: {old_val:.2f} -> {self.meta_heuristic.weights[op_name]:.2f}")
+        
+        # Apply scalar constraint to synthesizer
+        if adjustments.get('force_scalar_root'):
+            # This affects next synthesis call
+            if hasattr(self, '_force_scalar_next'):
+                self._force_scalar_next = True
+            applied.append("force_scalar_root=True")
+        
+        # Ban list ops at root
+        if adjustments.get('ban_list_ops_at_root'):
+            # Increase depth_penalty to discourage complex tree structures
+            if hasattr(self.meta_heuristic, 'weights'):
+                self.meta_heuristic.weights['depth_penalty'] = min(
+                    1.0, self.meta_heuristic.weights.get('depth_penalty', 0.1) + 0.1
+                )
+            applied.append("depth_penalty += 0.1")
+        
+        if applied:
+            print(f"  > [RSI-Meta] APPLIED CHANGES: {', '.join(applied)}")
+            # Persist changes
+            self.meta_heuristic._save_weights()
 
     def _enumerate_expressions(self, size: int) -> List[BSExpr]:
         """
