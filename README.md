@@ -1,4 +1,4 @@
-# Hybrid Program Synthesis with Safe RSI
+# Hybrid Program Synthesis with RSI
 
 A hybrid program synthesis engine implementing Recursive Self-Improvement (RSI) with process isolation and hierarchical abstraction.
 
