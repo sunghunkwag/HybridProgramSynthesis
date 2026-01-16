@@ -15582,8 +15582,18 @@ class AdversarialTeacher:
             io_pairs = []
             valid_program = True
             
-            # Use small inputs for verification
-            test_inputs = list(range(6)) # 0 to 5
+            # [FIX A] Use 60 diverse inputs for robust validation
+            # Include: small, medium, edge cases, negative numbers
+            test_inputs = (
+                list(range(0, 10)) +          # Small: 0-9
+                list(range(10, 30, 2)) +      # Medium: 10-28 (step 2)
+                list(range(-5, 0)) +          # Negative: -5 to -1
+                [50, 100, -10, -20] +         # Edge cases
+                [random.randint(1, 50) for _ in range(20)]  # Random diversity
+            )
+            # Remove duplicates but keep order
+            seen = set()
+            test_inputs = [x for x in test_inputs if not (x in seen or seen.add(x))]
             
             try:
                 for n in test_inputs:
@@ -15611,11 +15621,18 @@ class AdversarialTeacher:
             if all(o == i for i, o in enumerate(outputs)): continue # Identity
             if all(o == outputs[0] for o in outputs): continue # Constant
             
-            # 4. Success! Return Challenge
+            # [FIX B] Holdout separation: 80% regression, 20% holdout
+            random.shuffle(io_pairs)
+            split_idx = int(len(io_pairs) * 0.8)
+            regression_ios = io_pairs[:split_idx]
+            holdout_ios = io_pairs[split_idx:]
+            
+            # 4. Success! Return Challenge with both sets
             return {
                 'program': program,
                 'code_str': str(program),
-                'io_pairs': io_pairs,
+                'io_pairs': regression_ios,  # Used during search
+                'holdout_ios': holdout_ios,  # Used for primitive registration only
                 'difficulty': difficulty_level,
                 'complexity': self.evaluate_complexity(program)
             }

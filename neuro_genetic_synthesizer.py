@@ -327,6 +327,38 @@ class PrimitiveValidator:
             print(f"[Validator] {name} failed regression suite (Score: {score:.2f}). Rejected.")
             return False
 
+    def validate_score(self, name: str, ast_node: Any, validation_ios: List[Dict]) -> float:
+        """
+        Returns the pass rate as a float (0.0 - 1.0).
+        Does NOT print diagnostics; used for percentage-based checks.
+        """
+        if not validation_ios:
+            return 1.0  # No tests = assume pass
+        
+        passes = 0
+        for io in validation_ios:
+            env = {'n': io['input']}
+            try:
+                res = self.interpreter.run(ast_node, env)
+                
+                # [FIX C] ShapeError = discard immediately (score 0)
+                if isinstance(io['output'], (int, float)):
+                    if isinstance(res, list):
+                        continue  # ShapeError - doesn't count as pass
+                    if res is None or (isinstance(res, dict) and "__error__" in res):
+                        continue  # Error - doesn't count
+                
+                # Compare
+                if res == io['output']:
+                    passes += 1
+                elif isinstance(io['output'], list) and isinstance(res, list):
+                    if res == io['output']:
+                        passes += 1
+            except Exception:
+                pass  # Exception = failure
+        
+        return passes / len(validation_ios)
+
 class LibraryManager:
     def __init__(self, registry_path=REGISTRY_FILE):
         self.registry_path = registry_path
@@ -592,13 +624,17 @@ class LibraryManager:
         except:
             return init
 
-    def register_new_primitive(self, name: str, code: str, interpreter: SafeInterpreter, validation_ios: List[Dict] = None) -> bool:
+    def register_new_primitive(self, name: str, code: str, interpreter: SafeInterpreter, 
+                               validation_ios: List[Dict] = None, holdout_ios: List[Dict] = None) -> bool:
         """
         Attempts to register a new primitive.
         CHECKS:
         1. Semantic Uniqueness
         2. Valid DAG (no circular deps, level check)
         3. Regression Validation (HotSwap Pattern)
+        4. [FIX B] Holdout Validation (unseen during search)
+        
+        Registration requires >= 95% on BOTH regression and holdout.
         """
         # [RSI-Fix] Semantic De-Bloating (No Fake Complexity)
         if self._is_bloated(code):
@@ -631,12 +667,19 @@ class LibraryManager:
             
             new_level = max_dep_level + 1
             
-            # 3. Regression Suite Validation
+            # 3. Regression Suite Validation (must pass >= 95%)
             validator = PrimitiveValidator(interpreter)
             if validation_ios:
-                # We need to compile the AST to run it inside validation
-                # But actually SemanticHasher used ast.parse above, so 'tree' is valid AST
-                if not validator.validate(name, tree.body[0].value, validation_ios):
+                reg_score = validator.validate_score(name, tree.body[0].value, validation_ios)
+                if reg_score < 0.95:
+                    print(f"[Library] Rejecting {name}: Regression score {reg_score:.1%} < 95%")
+                    return False
+            
+            # 4. [FIX B] Holdout Validation (must pass >= 95%)
+            if holdout_ios:
+                hold_score = validator.validate_score(name, tree.body[0].value, holdout_ios)
+                if hold_score < 0.95:
+                    print(f"[Library] Rejecting {name}: Holdout score {hold_score:.1%} < 95%")
                     return False
 
             # Create Node
@@ -725,6 +768,41 @@ class LibraryManager:
         ops = list(self.primitives.keys())
         weights = [self.primitives[op].weight for op in ops]
         return ops, weights
+
+    def garbage_collect_unused(self, min_usage: int = 3, min_cycles: int = 10) -> int:
+        """
+        [FIX D] Remove primitives that haven't proven useful.
+        
+        A primitive is garbage collected if:
+        1. It's not a base primitive (level 0)
+        2. Its usage_count < min_usage after min_cycles
+        3. Its weight has decayed below 0.5 (indicating repeated failures)
+        
+        Returns: number of primitives removed
+        """
+        to_remove = []
+        
+        for name, node in self.primitives.items():
+            # Never GC base primitives
+            if node.level == 0 or node.code == "<native>":
+                continue
+            
+            # Check GC conditions
+            if node.usage_count < min_usage and node.weight < 0.5:
+                to_remove.append(name)
+                print(f"[Library-GC] Marking {name} for removal (usage={node.usage_count}, weight={node.weight:.2f})")
+        
+        # Remove marked primitives
+        for name in to_remove:
+            del self.primitives[name]
+            if name in self.runtime_primitives:
+                del self.runtime_primitives[name]
+        
+        if to_remove:
+            self.save_registry()
+            print(f"[Library-GC] Removed {len(to_remove)} unused primitives")
+        
+        return len(to_remove)
         
     def _is_bloated(self, code: str) -> bool:
         """
