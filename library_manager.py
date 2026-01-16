@@ -12,6 +12,7 @@ Manages learned primitives with:
 import json
 import os
 import random
+import tempfile
 import time
 from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -126,6 +127,14 @@ class LibraryManager:
         
         # Load existing registry
         self.load()
+
+    def _rebuild_indices(self) -> None:
+        """Rebuild indices from primitives to recover from partial/corrupt loads."""
+        self._hash_index = {}
+        self._level_index = {}
+        for name, prim in self.primitives.items():
+            self._hash_index[prim.semantic_hash] = name
+            self._level_index.setdefault(prim.level, set()).add(name)
     
     # =========================================================================
     # Pillar 2: Quality Gate
@@ -350,21 +359,9 @@ class LibraryManager:
         total = sum(weights)
         if total <= 0:
             return random.sample(candidates, min(n, len(candidates)))
-        
-        probs = [w / total for w in weights]
-        
-        # Sample with replacement
-        result = []
-        for _ in range(n):
-            r = random.random()
-            cumsum = 0
-            for i, p in enumerate(probs):
-                cumsum += p
-                if r <= cumsum:
-                    result.append(candidates[i])
-                    break
-        
-        return result
+
+        # Sample with replacement using built-in weighted choice
+        return random.choices(candidates, weights=weights, k=n)
     
     def get_weighted_ops(self) -> Dict[str, float]:
         """Get all ops with their weights for the synthesizer."""
@@ -401,8 +398,15 @@ class LibraryManager:
                 'primitives': to_save,
             }
             
-            with open(self.registry_path, 'w') as f:
-                json.dump(registry, f, indent=2)
+            directory = os.path.dirname(self.registry_path) or "."
+            fd, temp_path = tempfile.mkstemp(prefix="rsi_library_", dir=directory)
+            try:
+                with os.fdopen(fd, 'w') as f:
+                    json.dump(registry, f, indent=2)
+                os.replace(temp_path, self.registry_path)
+            finally:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
             
             print(f"[LibraryManager] Saved {len(to_save)} primitives to {self.registry_path}")
             return True
@@ -426,11 +430,7 @@ class LibraryManager:
             for name, data in primitives_data.items():
                 prim = Primitive.from_dict(data)
                 self.primitives[name] = prim
-                self._hash_index[prim.semantic_hash] = name
-                
-                if prim.level not in self._level_index:
-                    self._level_index[prim.level] = set()
-                self._level_index[prim.level].add(name)
+            self._rebuild_indices()
             
             print(f"[LibraryManager] Loaded {len(self.primitives)} primitives (v{version})")
             return True

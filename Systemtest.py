@@ -37,6 +37,16 @@ try:
 except ImportError:
     np = None
 
+def seed_everything(seed: int) -> None:
+    """Seed Python, NumPy, and Torch (if available) RNGs."""
+    random.seed(seed)
+    if np:
+        np.random.seed(seed)
+    if torch:
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+
 try:
     from neuro_genetic_synthesizer import NeuroGeneticSynthesizer, SafeInterpreter, LibraryManager
     try:
@@ -83,10 +93,13 @@ class WatchdogExecutor:
         import traceback
         
         captured_stdout = io.StringIO()
+        captured_stderr = io.StringIO()
         original_stdout = sys.stdout
+        original_stderr = sys.stderr
         
         try:
             sys.stdout = captured_stdout
+            sys.stderr = captured_stderr
             local_scope = {}
             global_scope = {'__builtins__': __builtins__, '__name__': '__watchdog_child__'}
             
@@ -104,13 +117,16 @@ class WatchdogExecutor:
             return_dict['success'] = True
             return_dict['result'] = result
             return_dict['output'] = captured_stdout.getvalue()
+            return_dict['stderr'] = captured_stderr.getvalue()
             
         except Exception:
             return_dict['success'] = False
             return_dict['error'] = traceback.format_exc()
             return_dict['output'] = captured_stdout.getvalue()
+            return_dict['stderr'] = captured_stderr.getvalue()
         finally:
             sys.stdout = original_stdout
+            sys.stderr = original_stderr
     
     def run_safe(self, code: str, timeout: float = None) -> Dict[str, Any]:
         """Execute code in isolated subprocess with timeout protection."""
@@ -122,6 +138,7 @@ class WatchdogExecutor:
             return_dict['error'] = 'Unknown fatal error'
             return_dict['output'] = ''
             return_dict['result'] = None
+            return_dict['stderr'] = ''
             
             process = mp.Process(target=self._target_runner, args=(code, return_dict))
             process.start()
@@ -137,6 +154,7 @@ class WatchdogExecutor:
                     'success': False,
                     'error': '🐨 Koala Watchdog: Process killed due to timeout (Infinite Loop detected)',
                     'output': '(Terminated)',
+                    'stderr': '(Terminated)',
                     'result': None,
                     'killed': True,
                 }
@@ -1567,7 +1585,7 @@ class OmegaForgeV13:
         vm: Optional[VirtualMachine] = None,
         config: Optional[EngineConfig] = None,
     ) -> None:
-        random.seed(seed)
+        seed_everything(seed)
         self.seed = seed
         self.vm = vm or VirtualMachine()
         self.detector = detector or StrictStructuralDetector()
@@ -16655,13 +16673,7 @@ def orchestrator_main():
 
 def set_seed(seed: int):
     """Set global random seeds for reproducibility."""
-    random.seed(seed)
-    if np:
-        np.random.seed(seed)
-    if torch:
-        torch.manual_seed(seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(seed)
+    seed_everything(seed)
     print(f"[System] Global seed set to: {seed}")
 
 def main():

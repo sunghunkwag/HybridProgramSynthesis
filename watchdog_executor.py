@@ -53,10 +53,13 @@ class WatchdogExecutor:
         """
         # Capture stdout to see what the code prints
         captured_stdout = io.StringIO()
+        captured_stderr = io.StringIO()
         original_stdout = sys.stdout
+        original_stderr = sys.stderr
         
         try:
             sys.stdout = captured_stdout
+            sys.stderr = captured_stderr
             
             # Create execution scope
             local_scope = {}
@@ -80,6 +83,7 @@ class WatchdogExecutor:
             return_dict['success'] = True
             return_dict['result'] = result
             return_dict['output'] = captured_stdout.getvalue()
+            return_dict['stderr'] = captured_stderr.getvalue()
             return_dict['local_scope'] = {
                 k: v for k, v in local_scope.items() 
                 if not k.startswith('_') and _is_serializable(v)
@@ -89,9 +93,11 @@ class WatchdogExecutor:
             return_dict['success'] = False
             return_dict['error'] = traceback.format_exc()
             return_dict['output'] = captured_stdout.getvalue()
+            return_dict['stderr'] = captured_stderr.getvalue()
             
         finally:
             sys.stdout = original_stdout
+            sys.stderr = original_stderr
     
     def run_safe(self, code: str, timeout: Optional[float] = None) -> Dict[str, Any]:
         """
@@ -118,6 +124,7 @@ class WatchdogExecutor:
             return_dict['error'] = 'Unknown fatal error (process may have crashed)'
             return_dict['output'] = ''
             return_dict['result'] = None
+            return_dict['stderr'] = ''
             
             # Spawn isolated process
             process = multiprocessing.Process(
@@ -144,6 +151,7 @@ class WatchdogExecutor:
                     'success': False,
                     'error': '🐨 Koala Watchdog: Process killed due to timeout (Infinite Loop detected)',
                     'output': '(Process terminated)',
+                    'stderr': '(Process terminated)',
                     'result': None,
                     'killed': True,
                 }

@@ -12,6 +12,10 @@ import hashlib
 import os
 from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Any, Tuple, Optional, Callable, Set, Union
+try:
+    import numpy as np
+except ImportError:
+    np = None
 
 # ==============================================================================
 # CONFIGURATION
@@ -654,6 +658,13 @@ class LibraryManager:
 # IV. NEURO GENETIC SYNTHESIZER (Main Engine)
 # ==============================================================================
 class NeuroGeneticSynthesizer:
+    _UNARY_OPS = {
+        'reverse', 'first', 'last', 'len', 'not_op', 'abs_val', 'neg', 'is_empty',
+        'sum_list', 'prod_list', 'min_list', 'max_list', 'count_list', 'range_list'
+    }
+    _TERNARY_OPS = {'if_then_else'}
+    _QUATERNARY_OPS = {'if_gt', 'if_lt'}
+
     def __init__(self, neural_guide=None, pop_size=200, generations=20, islands=3, checkpoint_path=None, **kwargs):
         """Backwards-compatible init that ignores legacy params but keeps new safe architecture."""
         self.library = LibraryManager()
@@ -672,11 +683,13 @@ class NeuroGeneticSynthesizer:
         """Delegate feedback to the library manager."""
         self.library.feedback(used_ops, success)
 
-    def synthesize(self, io_pairs: List[Dict], timeout: float = 2.0) -> List[Tuple[str, Any, int, int]]:
+    def synthesize(self, io_pairs: List[Dict], timeout: Optional[float] = 2.0, **kwargs) -> List[Tuple[str, Any, int, int]]:
         """
         Attempts to find a program that satisfies the IO pairs.
         Returns: list of (code_str, ast_node, complexity, score)
         """
+        if timeout is None:
+            timeout = 2.0
         start_time = time.time()
         best_programs = []
         
@@ -738,7 +751,12 @@ class NeuroGeneticSynthesizer:
         # For simplicity in this demo, we assume most are binary or unary.
         # We construct a call string.
         arity = 2
-        if op in ['reverse', 'first', 'len', 'not_op', 'abs']: arity = 1
+        if op in self._UNARY_OPS:
+            arity = 1
+        elif op in self._TERNARY_OPS:
+            arity = 3
+        elif op in self._QUATERNARY_OPS:
+            arity = 4
         
         args = [self._random_expr(depth-1, ops, weights) for _ in range(arity)]
         return f"{op}({', '.join(args)})"
@@ -753,12 +771,27 @@ class NeuroGeneticSynthesizer:
             env = {'n': inp}
             
             res = self.interpreter.run(code, env)
-            
-            if res == expected:
+
+            if self._compare_outputs(res, expected):
                 total_score += 1
             # Partial credit for being close? (Optional)
             
         return total_score / len(io_pairs) if io_pairs else 0
+
+    def _compare_outputs(self, result: Any, expected: Any) -> bool:
+        if isinstance(result, bool) or isinstance(expected, bool):
+            return result == expected
+        if isinstance(result, (int, float)) and isinstance(expected, (int, float)):
+            return abs(result - expected) <= 1e-6
+        if np is not None:
+            try:
+                res_arr = np.asarray(result)
+                exp_arr = np.asarray(expected)
+                if res_arr.dtype.kind in "if" and exp_arr.dtype.kind in "if":
+                    return np.allclose(res_arr, exp_arr, atol=1e-6, rtol=1e-6)
+            except Exception:
+                pass
+        return result == expected
 
     def _crossover(self, p1: str, p2: str) -> str:
         # Simple subtree swap (string manipulation for now, better with AST)

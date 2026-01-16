@@ -1,6 +1,7 @@
 
 import json
 import os
+import tempfile
 from typing import Dict, Any
 
 
@@ -16,32 +17,51 @@ class MetaHeuristic:
     as it gains experience, without any hardcoded cheats.
     """
     WEIGHTS_FILE = "rsi_meta_weights.json"
+    DEFAULT_WEIGHTS = {
+        'recursion': 1.0,
+        'op_plus': 1.0,
+        'op_minus': 1.0,
+        'op_mult': 1.0,
+        'depth_penalty': 0.1,  # penalize deep trees slightly
+        'learning_rate': 0.1
+    }
     
     def __init__(self):
         self.weights = self._load_weights()
         # Default weights if fresh
         if not self.weights:
-            self.weights = {
-                'recursion': 1.0,
-                'op_plus': 1.0,
-                'op_minus': 1.0,
-                'op_mult': 1.0,
-                'depth_penalty': 0.1,  # penalize deep trees slightly
-                'learning_rate': 0.1
-            }
+            self.weights = dict(self.DEFAULT_WEIGHTS)
     
     def _load_weights(self) -> Dict[str, float]:
         if os.path.exists(self.WEIGHTS_FILE):
             try:
                 with open(self.WEIGHTS_FILE, 'r') as f:
-                    return json.load(f)
-            except:
+                    data = json.load(f)
+                return self._sanitize_weights(data)
+            except (OSError, json.JSONDecodeError, TypeError, ValueError):
                 return {}
         return {}
     
     def _save_weights(self):
-        with open(self.WEIGHTS_FILE, 'w') as f:
-            json.dump(self.weights, f, indent=2)
+        directory = os.path.dirname(self.WEIGHTS_FILE) or "."
+        fd, temp_path = tempfile.mkstemp(prefix="meta_weights_", dir=directory)
+        try:
+            with os.fdopen(fd, 'w') as f:
+                json.dump(self.weights, f, indent=2)
+            os.replace(temp_path, self.WEIGHTS_FILE)
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+    def _sanitize_weights(self, data: Dict[str, Any]) -> Dict[str, float]:
+        """Ensure loaded weights are numeric and sane."""
+        if not isinstance(data, dict):
+            return {}
+        sanitized = dict(self.DEFAULT_WEIGHTS)
+        for key, value in data.items():
+            if key in sanitized and isinstance(value, (int, float)):
+                sanitized[key] = float(value)
+        return sanitized
             
     def get_score(self, program: Any) -> float:
         """
@@ -103,4 +123,3 @@ class MetaHeuristic:
         # For simple version, we just save.
         self._save_weights()
         print(f"[RSI-Meta] 🧠 Updated Search Heuristics: {self.weights}")
-
