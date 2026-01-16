@@ -16749,6 +16749,10 @@ def orchestrator_main():
     stagnation_window = 5
     best_reward_so_far = -float('inf')
     
+    # [DGM] Initialize Darwin Gödel Machine ONCE - persists across all rounds
+    dgm = DarwinGodelMachine()
+    dgm_failures_since_evolve = 0  # Track failures to determine when to evolve
+    
     # 2. Run 20 iterations
     start_time = time.time()
     for i in range(20):
@@ -16820,27 +16824,68 @@ def orchestrator_main():
                             tags=["code_snippet", "discovered", "success"],
                         )
                     
-                    # [DGM] Increment Teacher level on success
+                    # [DGM] Reset failure counter on success, increment Teacher level
+                    dgm_failures_since_evolve = 0
                     hrm_sidecar.adversarial_level = min(hrm_sidecar.adversarial_level + 1, 10)
                 else:
                     print(f"[HRM-Sidecar] No concepts discovered (synthesis failed)")
+                    dgm_failures_since_evolve += 1
                     
-                    # [DGM] DARWIN GÖDEL MACHINE - Evolve synthesizer when failing
-                    if i % 5 == 0 and i > 0:
-                        print(f"\n[DGM] 🧬 SYNTHESIS FAILED - Triggering self-modification!")
-                        dgm = DarwinGodelMachine()
+                    # [DGM] DARWIN GÖDEL MACHINE - Evolve after 3 consecutive failures
+                    if dgm_failures_since_evolve >= 3:
+                        print(f"\n[DGM] 🧬 {dgm_failures_since_evolve} CONSECUTIVE FAILURES - Triggering self-modification!")
+                        print(f"[DGM] Current challenge: {task_name}")
+                        print(f"[DGM] Using ACTUAL failing I/O for benchmark")
                         
-                        # Real benchmark: try to solve the CURRENT failing task
-                        def dgm_benchmark():
+                        # Store current IO for benchmark closure
+                        current_io = io_examples.copy()
+                        
+                        # Modify DGM benchmark to use ACTUAL failing task
+                        original_benchmark = dgm._run_benchmark_subprocess
+                        
+                        def adversarial_benchmark() -> float:
+                            """Benchmark using the ACTUAL Teacher challenge that caused failure."""
+                            import subprocess
+                            test_script = f'''
+import sys
+sys.path.insert(0, r"{os.path.dirname(dgm.SOURCE_FILE)}")
+try:
+    from Systemtest import HRMSidecar, ToolRegistry
+    tools = ToolRegistry()
+    sidecar = HRMSidecar(tools, quick=True)
+    io_pairs = {current_io}
+    result = sidecar.recursive_synthesize(io_pairs, max_size=5)
+    print("SCORE:1.0" if result else "SCORE:0.0")
+except Exception as e:
+    print(f"SCORE:0.0:{{e}}")
+'''
                             try:
-                                test_sidecar = HRMSidecar(tools, quick=True)
-                                result = test_sidecar.recursive_synthesize(io_examples, max_size=5)
-                                return 1.0 if result else 0.0
+                                result = subprocess.run(
+                                    [sys.executable, '-c', test_script],
+                                    capture_output=True, text=True, timeout=30,
+                                    cwd=os.path.dirname(dgm.SOURCE_FILE)
+                                )
+                                for line in (result.stdout + result.stderr).split('\n'):
+                                    if line.startswith('SCORE:'):
+                                        return float(line.split(':')[1])
+                                return 0.0
                             except:
                                 return 0.0
                         
-                        dgm.evolve_step("_generate_random_program")
-                        print(f"[DGM] Archive size: {len(dgm.archive)}")
+                        # Temporarily replace benchmark with adversarial one
+                        dgm._run_benchmark_subprocess = adversarial_benchmark
+                        
+                        # Run evolution step
+                        improved = dgm.evolve_step("_generate_random_program")
+                        
+                        # Restore original benchmark
+                        dgm._run_benchmark_subprocess = original_benchmark
+                        
+                        print(f"[DGM] Evolution result: {'IMPROVED' if improved else 'no change'}")
+                        print(f"[DGM] Archive size: {len(dgm.archive)}, Generation: {dgm.generation}")
+                        
+                        # Reset failure counter after evolution attempt
+                        dgm_failures_since_evolve = 0
                     
                     # [ConceptTransfer] Trigger meta-pattern discovery on stagnation
                     if hrm_sidecar.transfer_engine:
