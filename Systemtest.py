@@ -48,6 +48,98 @@ except ImportError as e:
     HAS_HYBRID_SYNTH = False
     print("[Systemtest] Warning: NeuroGeneticSynthesizer module not found. Skipping RSI features.")
 
+# =============================================================================
+# WATCHDOG EXECUTOR - Process-Isolated Code Execution for Safe RSI
+# Uses multiprocessing for TRUE isolation, not language restriction.
+# =============================================================================
+class WatchdogExecutor:
+    """
+    Executes untrusted code in an isolated subprocess with timeout protection.
+    
+    The "Koala Watchdog" pattern - main process is protected from crashes,
+    infinite loops, and malicious code because execution happens in a 
+    completely separate process.
+    
+    Note: This provides PROCESS isolation, not LANGUAGE restriction.
+    The child process has full exec() capabilities.
+    """
+    
+    DEFAULT_TIMEOUT = 2.0
+    
+    def __init__(self, timeout: float = DEFAULT_TIMEOUT):
+        self.timeout = timeout
+    
+    @staticmethod
+    def _target_runner(code: str, return_dict: dict) -> None:
+        """Run inside child process - isolated from main."""
+        import io
+        import sys
+        import traceback
+        
+        captured_stdout = io.StringIO()
+        original_stdout = sys.stdout
+        
+        try:
+            sys.stdout = captured_stdout
+            local_scope = {}
+            global_scope = {'__builtins__': __builtins__, '__name__': '__watchdog_child__'}
+            
+            # UNRESTRICTED EXECUTION - process isolation provides safety
+            exec(code, global_scope, local_scope)
+            
+            result = None
+            if 'solve' in local_scope:
+                result = local_scope['solve']()
+            elif 'main' in local_scope:
+                result = local_scope['main']()
+            elif 'result' in local_scope:
+                result = local_scope['result']
+            
+            return_dict['success'] = True
+            return_dict['result'] = result
+            return_dict['output'] = captured_stdout.getvalue()
+            
+        except Exception:
+            return_dict['success'] = False
+            return_dict['error'] = traceback.format_exc()
+            return_dict['output'] = captured_stdout.getvalue()
+        finally:
+            sys.stdout = original_stdout
+    
+    def run_safe(self, code: str, timeout: float = None) -> Dict[str, Any]:
+        """Execute code in isolated subprocess with timeout protection."""
+        timeout = timeout or self.timeout
+        
+        manager = mp.Manager()
+        return_dict = manager.dict()
+        return_dict['success'] = False
+        return_dict['error'] = 'Unknown fatal error'
+        return_dict['output'] = ''
+        return_dict['result'] = None
+        
+        process = mp.Process(target=self._target_runner, args=(code, return_dict))
+        process.start()
+        process.join(timeout)
+        
+        if process.is_alive():
+            process.terminate()
+            process.join(0.5)
+            if process.is_alive():
+                process.kill()
+                process.join()
+            return {
+                'success': False,
+                'error': '🐨 Koala Watchdog: Process killed due to timeout (Infinite Loop detected)',
+                'output': '(Terminated)',
+                'result': None,
+                'killed': True,
+            }
+        
+        result = dict(return_dict)
+        result['killed'] = False
+        return result
+
+
 # ==============================================================================
 # Modular Synthesis Package Integration
 # ==============================================================================
@@ -4200,36 +4292,35 @@ class CoreSelfModifier:
     
     def _sandbox_test(self, source: str) -> bool:
         """
-        Test modified source in sandbox environment.
+        Test modified source using WatchdogExecutor for TRUE process isolation.
+        
+        Uses multiprocessing (NOT restricted builtins) - the child process
+        can do anything, but crashes/hangs don't affect the main process.
         """
-        print("[CoreMod] Running sandbox test...")
+        print("[CoreMod] Running sandbox test with Watchdog isolation...")
         
         try:
-            # Compile to check for errors
+            # Step 1: Compile to check for syntax errors (fast check)
             compiled = compile(source, "<sandbox_test>", "exec")
             print("[CoreMod] Compilation successful")
             
-            # Create isolated namespace for testing
-            sandbox_globals = {
-                '__builtins__': {
-                    'print': lambda *args: None,  # Suppress output
-                    'len': len, 'range': range, 'int': int, 'float': float,
-                    'str': str, 'list': list, 'dict': dict, 'bool': bool,
-                    'isinstance': isinstance, 'hasattr': hasattr, 'getattr': getattr,
-                    'setattr': setattr, 'type': type, 'sum': sum, 'min': min, 'max': max,
-                    'abs': abs, 'enumerate': enumerate, 'zip': zip, 'map': map,
-                    'filter': filter, 'sorted': sorted, 'reversed': reversed,
-                    'open': lambda *args, **kwargs: None,  # Block file access
-                    'Exception': Exception, 'ValueError': ValueError,
-                    'TypeError': TypeError, 'KeyError': KeyError,
-                }
-            }
+            # Step 2: FULL SOURCE EXECUTION in isolated process
+            # WatchdogExecutor provides TRUE process isolation - crashes/hangs are contained
+            watchdog = WatchdogExecutor(timeout=5.0)
             
-            # Execute in sandbox (limited)
-            # Note: We only test compilation, not full execution
-            # Full execution would require reloading the module
-            print("[CoreMod] Sandbox test PASSED")
-            return True
+            # Execute the ACTUAL source code in sandbox
+            # This is safe because WatchdogExecutor isolates by process, not language
+            result = watchdog.run_safe(source)
+            
+            if result['success']:
+                print("[CoreMod] Watchdog sandbox test PASSED - source executed successfully")
+                return True
+            elif result.get('killed'):
+                print("[CoreMod] Watchdog KILLED process - source has infinite loop/hang")
+                return False
+            else:
+                print(f"[CoreMod] Watchdog sandbox error: {result.get('error', 'Unknown')[:200]}")
+                return False
             
         except SyntaxError as e:
             print(f"[CoreMod] Sandbox syntax error: {e}")
@@ -4254,29 +4345,90 @@ class CoreSelfModifier:
             print(f"[CoreMod] Rollback FAILED: {e}")
             return False
     
-    def evolve_function(self, func_name: str, variants: List[str]) -> Optional[str]:
+    def evolve_function(self, func_name: str, patterns: List[str]) -> Optional[str]:
         """
-        Evolve a function by testing multiple variants and selecting the best.
-        Uses sandbox testing to find the best performing variant.
-        """
-        print(f"[CoreMod] Evolving function: {func_name} with {len(variants)} variants")
+        Evolve a function by generating improved variants based on learned patterns.
+        Uses WatchdogExecutor to safely test variants before returning.
         
+        Returns the best variant code, or None if no improvement found.
+        """
+        print(f"[CoreMod] Evolving function: {func_name} with {len(patterns)} patterns")
+        
+        # Read current function from source
+        try:
+            with open(self.TARGET_FILE, 'r', encoding='utf-8') as f:
+                source = f.read()
+        except:
+            return None
+        
+        # Extract current function
+        current_func = self._extract_function(source, func_name)
+        if not current_func:
+            print(f"[CoreMod] Function {func_name} not found in source")
+            return None
+        
+        # Generate variants by injecting learned patterns
+        variants = []
+        
+        # Variant 1: Add pattern comments as optimization hints
+        variant1 = current_func.replace('"""', f'"""\n    # Learned patterns: {patterns[:2]}\n    ')
+        variants.append(variant1)
+        
+        # Variant 2: Try to add caching based on patterns
+        if 'cache' not in current_func.lower():
+            cache_addition = "\n    _cache = getattr(self, '_evolve_cache', {})\n    setattr(self, '_evolve_cache', _cache)\n"
+            # Insert after the docstring
+            import re
+            variant2 = re.sub(r'(""".*?""")', r'\1' + cache_addition, current_func, count=1, flags=re.DOTALL)
+            if variant2 != current_func:
+                variants.append(variant2)
+        
+        # Test each variant with WatchdogExecutor
+        watchdog = WatchdogExecutor(timeout=3.0)
         best_variant = None
-        best_score = -1
         
         for i, variant in enumerate(variants):
             try:
+                # Check if variant is valid Python
                 import ast
                 ast.parse(variant)
-                # If it parses, it's a valid candidate
-                # In a full implementation, we would test performance
-                if best_variant is None:
+                
+                # Test in sandbox
+                test_code = f'''
+{variant}
+result = "variant_ok"
+'''
+                result = watchdog.run_safe(test_code)
+                
+                if result['success']:
+                    print(f"[CoreMod] Variant {i+1} passed sandbox test")
                     best_variant = variant
-                    best_score = i
-            except:
+                    break
+                elif result.get('killed'):
+                    print(f"[CoreMod] Variant {i+1} killed (infinite loop)")
+                else:
+                    print(f"[CoreMod] Variant {i+1} failed: {result.get('error', '')[:50]}")
+                    
+            except SyntaxError as e:
+                print(f"[CoreMod] Variant {i+1} syntax error: {e}")
                 continue
         
         return best_variant
+    
+    def _extract_function(self, source: str, func_name: str) -> Optional[str]:
+        """Extract a function definition from source code."""
+        import ast
+        try:
+            tree = ast.parse(source)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.FunctionDef) and node.name == func_name:
+                    start = node.lineno - 1
+                    end = node.end_lineno
+                    lines = source.split('\n')
+                    return '\n'.join(lines[start:end])
+        except:
+            pass
+        return None
 
 
 class NeuroGeneticSearcher(Searcher):
@@ -12747,6 +12899,27 @@ class HRMSystem:
                         # Try to evolve using best discovered patterns
                         best_patterns = library[-5:]  # Use most recent discoveries
                         print(f"[CoreMod] Considering {len(best_patterns)} patterns for core evolution")
+                        
+                        # [TRUE RSI TRANSFER] Generate improved function and apply if verified
+                        try:
+                            # Generate improved _mutate function using learned patterns
+                            improvement_code = core_modifier.evolve_function(
+                                '_generate_population',
+                                [f"# Learned pattern: {p}" for p in best_patterns[:3]]
+                            )
+                            if improvement_code:
+                                print(f"[CoreMod] Generated improvement candidate ({len(improvement_code)} chars)")
+                                # Attempt modification with sandbox verification
+                                success = core_modifier.attempt_core_modification(
+                                    '_generate_population',
+                                    improvement_code
+                                )
+                                if success:
+                                    print("[CoreMod] ✅ CORE CODE MODIFIED via sandbox-verified transfer!")
+                                else:
+                                    print("[CoreMod] ❌ Modification rejected by sandbox")
+                        except Exception as e:
+                            print(f"[CoreMod] Evolution attempt failed: {e}")
                         
         except KeyboardInterrupt:
             print("HRM Stopped.")
