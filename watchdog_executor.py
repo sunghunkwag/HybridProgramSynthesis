@@ -112,46 +112,46 @@ class WatchdogExecutor:
         timeout = timeout or self.timeout
         
         # Create shared state with Manager
-        manager = multiprocessing.Manager()
-        return_dict = manager.dict()
-        return_dict['success'] = False
-        return_dict['error'] = 'Unknown fatal error (process may have crashed)'
-        return_dict['output'] = ''
-        return_dict['result'] = None
-        
-        # Spawn isolated process
-        process = multiprocessing.Process(
-            target=self._target_runner,
-            args=(code, return_dict)
-        )
-        process.start()
-        
-        # Wait for completion with timeout
-        process.join(timeout)
-        
-        # Check if process is still running (infinite loop or hang)
-        if process.is_alive():
-            # KILL IT - no mercy for infinite loops
-            process.terminate()
-            process.join(0.5)  # Give it a moment to terminate gracefully
+        with multiprocessing.Manager() as manager:
+            return_dict = manager.dict()
+            return_dict['success'] = False
+            return_dict['error'] = 'Unknown fatal error (process may have crashed)'
+            return_dict['output'] = ''
+            return_dict['result'] = None
             
+            # Spawn isolated process
+            process = multiprocessing.Process(
+                target=self._target_runner,
+                args=(code, return_dict)
+            )
+            process.start()
+            
+            # Wait for completion with timeout
+            process.join(timeout)
+            
+            # Check if process is still running (infinite loop or hang)
             if process.is_alive():
-                # Still alive? Force kill.
-                process.kill()
-                process.join()
+                # KILL IT - no mercy for infinite loops
+                process.terminate()
+                process.join(0.5)  # Give it a moment to terminate gracefully
+                
+                if process.is_alive():
+                    # Still alive? Force kill.
+                    process.kill()
+                    process.join()
+                
+                return {
+                    'success': False,
+                    'error': '🐨 Koala Watchdog: Process killed due to timeout (Infinite Loop detected)',
+                    'output': '(Process terminated)',
+                    'result': None,
+                    'killed': True,
+                }
             
-            return {
-                'success': False,
-                'error': '🐨 Koala Watchdog: Process killed due to timeout (Infinite Loop detected)',
-                'output': '(Process terminated)',
-                'result': None,
-                'killed': True,
-            }
-        
-        # Process completed - return captured state
-        result = dict(return_dict)
-        result['killed'] = False
-        return result
+            # Process completed - return captured state
+            result = dict(return_dict)
+            result['killed'] = False
+            return result
     
     def validate_code(self, code: str, test_inputs: list = None) -> Dict[str, Any]:
         """

@@ -116,34 +116,34 @@ class WatchdogExecutor:
         """Execute code in isolated subprocess with timeout protection."""
         timeout = timeout or self.timeout
         
-        manager = mp.Manager()
-        return_dict = manager.dict()
-        return_dict['success'] = False
-        return_dict['error'] = 'Unknown fatal error'
-        return_dict['output'] = ''
-        return_dict['result'] = None
-        
-        process = mp.Process(target=self._target_runner, args=(code, return_dict))
-        process.start()
-        process.join(timeout)
-        
-        if process.is_alive():
-            process.terminate()
-            process.join(0.5)
+        with mp.Manager() as manager:
+            return_dict = manager.dict()
+            return_dict['success'] = False
+            return_dict['error'] = 'Unknown fatal error'
+            return_dict['output'] = ''
+            return_dict['result'] = None
+            
+            process = mp.Process(target=self._target_runner, args=(code, return_dict))
+            process.start()
+            process.join(timeout)
+            
             if process.is_alive():
-                process.kill()
-                process.join()
-            return {
-                'success': False,
-                'error': '🐨 Koala Watchdog: Process killed due to timeout (Infinite Loop detected)',
-                'output': '(Terminated)',
-                'result': None,
-                'killed': True,
-            }
-        
-        result = dict(return_dict)
-        result['killed'] = False
-        return result
+                process.terminate()
+                process.join(0.5)
+                if process.is_alive():
+                    process.kill()
+                    process.join()
+                return {
+                    'success': False,
+                    'error': '🐨 Koala Watchdog: Process killed due to timeout (Infinite Loop detected)',
+                    'output': '(Terminated)',
+                    'result': None,
+                    'killed': True,
+                }
+            
+            result = dict(return_dict)
+            result['killed'] = False
+            return result
 
 
 # ==============================================================================
@@ -467,11 +467,15 @@ print("[Systemtest] [OK] Multi-Domain RSI Engine (Inlined).")
 class Optimizer:
     """Optimizer class for optimization strategy."""
     def __init__(self, learning_rate: float = 0.01):
+        if np is None:
+            raise ImportError("numpy is required for Optimizer. Install with: pip install numpy")
         self.learning_rate = learning_rate
         self.history = []
 
     def optimize(self, gradient: np.ndarray):
         """Perform an optimization step."""
+        if np is None:
+            raise ImportError("numpy is required for Optimizer. Install with: pip install numpy")
         change = gradient * self.learning_rate
         self.history.append(change)
         return change
@@ -488,6 +492,8 @@ class SimulationComponent:
     """
     def __init__(self, id: int, max_steps: int = 100, state_dim: int = 10, 
                  noise_scale: float = 0.1, decay: float = 0.95):
+        if np is None:
+            raise ImportError("numpy is required for SimulationComponent. Install with: pip install numpy")
         self.id = id
         self.max_steps = max_steps
         self.state_dim = state_dim

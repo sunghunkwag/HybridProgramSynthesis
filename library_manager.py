@@ -41,6 +41,7 @@ class Primitive:
     dependencies: Set[str] = field(default_factory=set)
     usage_weight: float = 1.0
     usage_count: int = 0
+    compression_ratio: float = 1.0
     created_at: float = field(default_factory=time.time)
     
     def to_dict(self) -> Dict:
@@ -53,6 +54,7 @@ class Primitive:
             'dependencies': list(self.dependencies),
             'usage_weight': self.usage_weight,
             'usage_count': self.usage_count,
+            'compression_ratio': self.compression_ratio,
             'created_at': self.created_at,
         }
     
@@ -67,6 +69,7 @@ class Primitive:
             dependencies=set(d.get('dependencies', [])),
             usage_weight=d.get('usage_weight', 1.0),
             usage_count=d.get('usage_count', 0),
+            compression_ratio=d.get('compression_ratio', 1.0),
             created_at=d.get('created_at', time.time()),
         )
     
@@ -132,7 +135,8 @@ class LibraryManager:
         self, 
         name: str, 
         expr: DSLExpr, 
-        dependencies: Set[str] = None
+        dependencies: Set[str] = None,
+        compression_ratio: float = 1.0,
     ) -> Tuple[bool, str]:
         """
         Add a new primitive with quality checks.
@@ -168,6 +172,7 @@ class LibraryManager:
             dependencies=dependencies,
             usage_weight=1.0,
             usage_count=0,
+            compression_ratio=compression_ratio,
         )
         
         self.primitives[name] = prim
@@ -200,7 +205,12 @@ class LibraryManager:
         # Find dependencies
         deps = self._extract_dependencies(expr)
         
-        return self.add_primitive(name, expr, deps)
+        return self.add_primitive(
+            name,
+            expr,
+            deps,
+            compression_ratio=compression,
+        )
     
     def record_usage(self, name: str, success: bool) -> None:
         """Record that a primitive was used (successfully or not)."""
@@ -225,7 +235,7 @@ class LibraryManager:
         
         prim = self.primitives[name]
         return UtilityScorer.should_keep(
-            compression_ratio=1.5,  # Already passed on add
+            compression_ratio=prim.compression_ratio,
             usage_count=prim.usage_count,
             is_unique=True,  # Already passed on add
         )
@@ -267,12 +277,13 @@ class LibraryManager:
         if not dependencies:
             return 1  # No deps = level 1 (simple composition of atomics)
         
-        max_dep_level = -1
+        max_dep_level = 0
         for dep in dependencies:
             if dep not in self.primitives:
                 # Check if built-in atomic
                 from safe_interpreter import SafeInterpreter
                 if dep in SafeInterpreter.ALLOWED_OPS:
+                    max_dep_level = max(max_dep_level, 0)
                     continue  # Atomics are level 0
                 return -1  # Unknown dependency
             
