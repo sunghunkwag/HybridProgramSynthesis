@@ -93,7 +93,7 @@
   "concept_25": {
     "code": "not_op(concept_22(reverse(n), first(n)))",
     "level": 3,
-    "usage": 472,
+    "usage": 473,
     "weight": 100.0,
     "hash": "31d2f43029a06a14f40a5f88e2dd23203fb1a7241f799afc42b7a9f8848e1168"
   },
@@ -121,14 +121,14 @@
   "concept_29": {
     "code": "not_op(first(first(n)))",
     "level": 1,
-    "usage": 497,
+    "usage": 498,
     "weight": 100.0,
     "hash": "d73962a2205b4603f55949d13b9fba529ea7c566eda7070c81abbad98c59dafe"
   },
   "concept_30": {
     "code": "not_op(first(first(concept_18(n, n))))",
     "level": 2,
-    "usage": 377,
+    "usage": 378,
     "weight": 100.0,
     "hash": "42d0b5385f84f2f300597e89327e0635ba59a7c641d43d1c9cd7df85784dfab6"
   },
@@ -338,7 +338,7 @@
   "concept_60": {
     "code": "not_op(concept_53(n, n))",
     "level": 5,
-    "usage": 426,
+    "usage": 427,
     "weight": 100.0,
     "hash": "f82d57c6d0e68cd795f62b57cba9225142c1919dabd503806d1da9c076aa0fed"
   },
@@ -394,7 +394,7 @@
   "concept_112": {
     "code": "or_op(concept_110(n, n), reverse(n))",
     "level": 8,
-    "usage": 446,
+    "usage": 447,
     "weight": 100.0,
     "hash": "263d22612ba22b9d2e797be070288f0910879f3e155695899a47f4d4efaba277"
   },
@@ -761,5 +761,19 @@
     "usage": 1,
     "weight": 5.0,
     "hash": "e5913961433b577bbbe8d4a1d4cd9b1538870ec0d4485e9e16f81246799b3d9c"
+  },
+  "concept_174": {
+    "code": "prod_list(concept_30(n, n))",
+    "level": 3,
+    "usage": 1,
+    "weight": 5.0,
+    "hash": "34547c4ed64e54bb875d3b89b12ec05294d8c8d9e61d4a9fc400c9c432d8b0f8"
+  },
+  "concept_175": {
+    "code": "prod_list(concept_25(concept_112(n, n), concept_29(n, n)))",
+    "level": 9,
+    "usage": 1,
+    "weight": 5.0,
+    "hash": "ec5ba87ddb6ed13eb4c29248cf7ec136a3d89accee7cef5d26f2752cb72ba9a6"
   }
 }

@@ -178,21 +178,37 @@ class FailureAnalyzer:
         """
         adjustments = {}
         
-        # If ShapeError dominates, force scalar constraints
         total_errors = sum(self.error_counts.values())
-        if total_errors > 0:
-            shape_ratio = self.error_counts['ShapeError'] / total_errors
-            if shape_ratio > 0.5:
-                adjustments['force_scalar_root'] = True
-                adjustments['ban_list_ops_at_root'] = True
+        if total_errors == 0:
+            return adjustments
         
-        # Find operators that consistently fail
+        # If ShapeError dominates (even 30%), force scalar constraints
+        shape_ratio = self.error_counts['ShapeError'] / total_errors
+        if shape_ratio > 0.3:  # Lowered from 0.5
+            adjustments['force_scalar_root'] = True
+            adjustments['ban_list_ops_at_root'] = True
+            print(f"[META] ShapeError ratio {shape_ratio:.1%} > 30%, forcing scalar root")
+        
+        # If ValueError dominates, we have type mismatches
+        value_ratio = self.error_counts.get('ValueError', 0) / total_errors
+        if value_ratio > 0.3:
+            adjustments['increase_type_strictness'] = True
+            print(f"[META] ValueError ratio {value_ratio:.1%} > 30%, increasing type strictness")
+        
+        # If NoneReturn dominates, operators are returning None
+        none_ratio = self.error_counts.get('NoneReturn', 0) / total_errors
+        if none_ratio > 0.3:
+            adjustments['ban_unsafe_ops'] = True
+            print(f"[META] NoneReturn ratio {none_ratio:.1%} > 30%, banning unsafe ops")
+        
+        # Find operators that consistently fail (LOOSENED: 5 failures, 50% dominance)
         for op, error_map in self.op_failure_map.items():
             total_op_failures = sum(error_map.values())
-            if total_op_failures > 10:
+            if total_op_failures > 5:  # Lowered from 10
                 dominant_error = max(error_map, key=error_map.get)
-                if error_map[dominant_error] / total_op_failures > 0.8:
-                    adjustments[f'reduce_weight_{op}'] = 0.1
+                if error_map[dominant_error] / total_op_failures > 0.5:  # Lowered from 0.8
+                    adjustments[f'reduce_weight_{op}'] = 0.5  # Reduce by 50%, not 90%
+                    print(f"[META] Operator '{op}' fails with {dominant_error} {error_map[dominant_error]}/{total_op_failures} times, reducing weight")
         
         return adjustments
     
