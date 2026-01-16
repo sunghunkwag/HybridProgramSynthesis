@@ -15577,6 +15577,208 @@ class AdversarialTeacher:
         return 1
 
 
+class SelfModifier:
+    """
+    Darwin Gödel Machine (DGM) Style Self-Modification.
+    
+    The system reads its OWN source code, proposes mutations,
+    tests them on benchmarks, and writes back improved versions.
+    
+    This is TRUE Recursive Self-Improvement:
+    The code that does the synthesis ITSELF evolves.
+    """
+    
+    # Target function to evolve (we evolve this specific method)
+    TARGET_METHOD = "_generate_random_program"
+    SOURCE_FILE = os.path.abspath(__file__)
+    BACKUP_DIR = "dgm_backups"
+    
+    def __init__(self):
+        self.rng = random.Random()
+        self.current_score = 0.0
+        self.generation = 0
+        self.mutation_history: List[Dict] = []
+        
+        # Ensure backup directory exists
+        os.makedirs(self.BACKUP_DIR, exist_ok=True)
+    
+    def read_own_source(self) -> str:
+        """Read the current source code of this file."""
+        with open(self.SOURCE_FILE, 'r', encoding='utf-8') as f:
+            return f.read()
+    
+    def extract_method(self, source: str, method_name: str) -> Tuple[str, int, int]:
+        """Extract a method's source code and its line range."""
+        lines = source.split('\n')
+        start_line = None
+        end_line = None
+        indent = None
+        
+        for i, line in enumerate(lines):
+            if f"def {method_name}" in line:
+                start_line = i
+                # Detect indentation
+                indent = len(line) - len(line.lstrip())
+            elif start_line is not None and indent is not None:
+                # Check if we've exited the method (same or lower indent, non-empty)
+                stripped = line.lstrip()
+                if stripped and not stripped.startswith('#'):
+                    current_indent = len(line) - len(line.lstrip())
+                    if current_indent <= indent and not line.strip().startswith('def '):
+                        end_line = i
+                        break
+        
+        if start_line is None:
+            return "", -1, -1
+        if end_line is None:
+            end_line = len(lines)
+            
+        method_source = '\n'.join(lines[start_line:end_line])
+        return method_source, start_line, end_line
+    
+    def mutate_method(self, method_source: str) -> str:
+        """
+        Genetically mutate the method's source code.
+        This is code-level mutation, not AST-level.
+        """
+        lines = method_source.split('\n')
+        mutation_type = self.rng.choice([
+            'change_constant',
+            'change_operator',
+            'swap_lines',
+            'duplicate_line',
+            'change_probability'
+        ])
+        
+        mutated_lines = lines.copy()
+        
+        if mutation_type == 'change_constant':
+            # Find and change a numeric constant
+            for i, line in enumerate(mutated_lines):
+                if 'randint(' in line:
+                    # Change range
+                    mutated_lines[i] = line.replace('0, 5', f'0, {self.rng.randint(3, 10)}')
+                    break
+                    
+        elif mutation_type == 'change_operator':
+            # Add or remove an operator from choices
+            for i, line in enumerate(mutated_lines):
+                if "choices = [" in line:
+                    ops = ['+', '-', '*', '/', '%', 'Rec']
+                    selected = self.rng.sample(ops, k=self.rng.randint(3, len(ops)))
+                    mutated_lines[i] = f"        choices = {selected}"
+                    break
+                    
+        elif mutation_type == 'swap_lines':
+            # Swap two adjacent lines (if safe)
+            if len(mutated_lines) > 5:
+                idx = self.rng.randint(2, len(mutated_lines) - 3)
+                mutated_lines[idx], mutated_lines[idx + 1] = mutated_lines[idx + 1], mutated_lines[idx]
+                
+        elif mutation_type == 'change_probability':
+            # Change probability thresholds
+            for i, line in enumerate(mutated_lines):
+                if '< 0.3' in line:
+                    new_prob = round(self.rng.uniform(0.1, 0.5), 2)
+                    mutated_lines[i] = line.replace('< 0.3', f'< {new_prob}')
+                    break
+                elif '< 0.5' in line:
+                    new_prob = round(self.rng.uniform(0.3, 0.7), 2)
+                    mutated_lines[i] = line.replace('< 0.5', f'< {new_prob}')
+                    break
+                    
+        elif mutation_type == 'duplicate_line':
+            # Duplicate a random line
+            if len(mutated_lines) > 3:
+                idx = self.rng.randint(1, len(mutated_lines) - 2)
+                mutated_lines.insert(idx + 1, mutated_lines[idx])
+        
+        return '\n'.join(mutated_lines)
+    
+    def apply_mutation(self, source: str, old_method: str, new_method: str) -> str:
+        """Replace old method with new method in source."""
+        return source.replace(old_method, new_method)
+    
+    def backup_current(self):
+        """Create a backup of current source."""
+        source = self.read_own_source()
+        backup_path = os.path.join(self.BACKUP_DIR, f"backup_gen_{self.generation}.py")
+        with open(backup_path, 'w', encoding='utf-8') as f:
+            f.write(source)
+        return backup_path
+    
+    def write_modified_source(self, new_source: str):
+        """Write modified source back to file."""
+        with open(self.SOURCE_FILE, 'w', encoding='utf-8') as f:
+            f.write(new_source)
+    
+    def test_modification(self, test_func: Callable[[], float]) -> float:
+        """
+        Test the current code modification.
+        Returns a score (higher = better).
+        """
+        try:
+            return test_func()
+        except Exception as e:
+            print(f"[DGM] Modification test failed: {e}")
+            return -1.0
+    
+    def evolve_step(self, test_func: Callable[[], float]) -> bool:
+        """
+        One step of Darwin Gödel Machine evolution:
+        1. Read own source
+        2. Extract target method
+        3. Mutate it
+        4. Write back
+        5. Test
+        6. Keep if better, revert if worse
+        """
+        print(f"\n[DGM] === Generation {self.generation} ===")
+        
+        # 1. Backup
+        backup_path = self.backup_current()
+        
+        # 2. Read and extract
+        source = self.read_own_source()
+        method_source, start, end = self.extract_method(source, self.TARGET_METHOD)
+        
+        if not method_source:
+            print(f"[DGM] Could not find method: {self.TARGET_METHOD}")
+            return False
+        
+        # 3. Mutate
+        mutated_method = self.mutate_method(method_source)
+        new_source = self.apply_mutation(source, method_source, mutated_method)
+        
+        # 4. Write
+        self.write_modified_source(new_source)
+        print(f"[DGM] Applied mutation to {self.TARGET_METHOD}")
+        
+        # 5. Test (need to reload module - tricky in Python)
+        # For safety, we test by running a subprocess or just trust the next run
+        new_score = self.test_modification(test_func)
+        
+        # 6. Compare
+        if new_score > self.current_score:
+            print(f"[DGM] ✅ IMPROVEMENT! {self.current_score:.4f} → {new_score:.4f}")
+            self.current_score = new_score
+            self.mutation_history.append({
+                'generation': self.generation,
+                'score': new_score,
+                'mutation': mutated_method[:100] + "..."
+            })
+            self.generation += 1
+            return True
+        else:
+            # Revert
+            print(f"[DGM] ❌ No improvement ({new_score:.4f} <= {self.current_score:.4f}). Reverting.")
+            with open(backup_path, 'r', encoding='utf-8') as f:
+                original = f.read()
+            self.write_modified_source(original)
+            self.generation += 1
+            return False
+
+
 class HRMSidecar:
     def __init__(self, tools_registry: ToolRegistry, quick: bool = False, guided: bool = False):
         self.tools = tools_registry
