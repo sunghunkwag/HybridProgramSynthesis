@@ -13723,6 +13723,60 @@ class SafeInterpreter:
         # Initial scope has 'n' as arg 0. We pass 'n' explicitly for BSVar support too.
         return self._execute(body_ast, n, k, v, ctx, body_ast, [n])
 
+    def run_recursive_fib(self, body_ast: BSExpr, n: int, v0: int = 0, v1: int = 1) -> int:
+        """
+        Execute recursive program with DUAL base case for Fibonacci-like patterns.
+        f(0) = v0 (default 0)
+        f(1) = v1 (default 1)
+        """
+        if n == 0: return v0
+        if n == 1: return v1
+        ctx = {'gas': self.limit, 'v0': v0, 'v1': v1}
+        return self._execute_fib(body_ast, n, ctx, body_ast, [n])
+
+    def _execute_fib(self, curr_expr: BSExpr, n: int, ctx: Dict[str, Any], root_body: BSExpr, local_args: List[int]) -> int:
+        """Execute with Fibonacci dual base case."""
+        if ctx['gas'] <= 0:
+            raise RuntimeError("Gas limit exceeded")
+        ctx['gas'] -= 1
+        
+        if isinstance(curr_expr, BSVal):
+            return curr_expr.val
+        
+        if isinstance(curr_expr, BSVar):
+            return n
+            
+        if isinstance(curr_expr, BSArg):
+            if curr_expr.index < len(local_args):
+                return local_args[curr_expr.index]
+            return 0
+            
+        if isinstance(curr_expr, BSBinOp):
+            l = self._execute_fib(curr_expr.left, n, ctx, root_body, local_args)
+            r = self._execute_fib(curr_expr.right, n, ctx, root_body, local_args)
+            
+            if curr_expr.op == '+': return l + r
+            if curr_expr.op == '-': return l - r
+            if curr_expr.op == '*':
+                res = l * r
+                if abs(res) > 2000000: raise RuntimeError("Overflow")
+                return res
+            return 0
+            
+        if isinstance(curr_expr, BSRecCall):
+            arg_val = self._execute_fib(curr_expr.arg, n, ctx, root_body, local_args)
+            
+            if arg_val < 0: return 0
+            if arg_val >= n: raise RuntimeError("Non-terminating recursion (arg >= n)")
+            
+            # DUAL BASE CASE
+            if arg_val == 0: return ctx['v0']
+            if arg_val == 1: return ctx['v1']
+            
+            return self._execute_fib(root_body, arg_val, ctx, root_body, [arg_val])
+        
+        return 0
+
     def _execute(self, curr_expr: BSExpr, n: int, k: int, v: int, ctx: Dict[str, int], root_body: BSExpr, local_args: List[int]) -> int:
         """
         Executes an expression with local arguments support.
@@ -15472,37 +15526,89 @@ class HRMSidecar:
         Synthesize recursive programs using BSRecCall enumeration.
         Targets: fibonacci, factorial, sum_to_n
         
-        Uses generate_random_program from SelfCritic with BSRecCall expressions,
-        evaluated by SafeInterpreter.run_recursive.
+        Uses run_recursive_fib for dual base case patterns (fibonacci).
+        Uses run_recursive for single base case patterns (factorial, sum_to_n).
         """
         rng = random.Random()
         
-        # Detect if task requires recursion (numeric inputs with specific patterns)
         if not io_pairs:
             return None
         
-        # Check if all inputs are integers (recursive numeric task)
+        # Check if all inputs are integers
         if not all(isinstance(p.get('input'), (int, float)) for p in io_pairs):
             return None
         
-        print(f"  > [RecursiveSynthesizer] Attempting recursive enumeration ({max_attempts} attempts)...")
+        # Detect Fibonacci pattern: check if we have f(0), f(1), and f(n) = f(n-1) + f(n-2) fits
+        is_fibonacci_pattern = self._detect_fibonacci_pattern(io_pairs)
         
+        print(f"  > [RecursiveSynthesizer] Attempting recursive enumeration ({max_attempts} attempts)...")
+        if is_fibonacci_pattern:
+            print(f"  > [RecursiveSynthesizer] Detected FIBONACCI pattern! Using dual base case.")
+        
+        # 1. TRY KNOWN PATTERNS FIRST (targeted search)
+        known_patterns = [
+            # Fibonacci: f(n) = f(n-1) + f(n-2)
+            BSBinOp('+', BSRecCall(BSBinOp('-', BSVar('n'), BSVal(1))), 
+                        BSRecCall(BSBinOp('-', BSVar('n'), BSVal(2)))),
+            # Sum to n: f(n) = n + f(n-1)
+            BSBinOp('+', BSVar('n'), BSRecCall(BSBinOp('-', BSVar('n'), BSVal(1)))),
+            # Factorial: f(n) = n * f(n-1)
+            BSBinOp('*', BSVar('n'), BSRecCall(BSBinOp('-', BSVar('n'), BSVal(1)))),
+            # Double: f(n) = f(n-1) + f(n-1) or 2*f(n-1)
+            BSBinOp('+', BSRecCall(BSBinOp('-', BSVar('n'), BSVal(1))),
+                        BSRecCall(BSBinOp('-', BSVar('n'), BSVal(1)))),
+        ]
+        
+        for program in known_patterns:
+            if self._test_program(program, io_pairs, is_fibonacci_pattern):
+                code_str = str(program)
+                print(f"  > [RecursiveSynthesizer] SUCCESS (known pattern)! Found: {code_str}")
+                return (code_str, program)
+        
+        # 2. RANDOM ENUMERATION
         for attempt in range(max_attempts):
-            # Generate random BSExpr with BSRecCall
             depth = rng.randint(2, 4)
             program = self._generate_recursive_program(rng, depth)
             
-            # Evaluate against all I/O pairs
-            matches = 0
-            valid = True
+            if self._test_program(program, io_pairs, is_fibonacci_pattern):
+                code_str = str(program)
+                print(f"  > [RecursiveSynthesizer] SUCCESS (enumeration)! Found: {code_str}")
+                return (code_str, program)
+        
+        return None
+
+    def _detect_fibonacci_pattern(self, io_pairs: List[Dict[str, Any]]) -> bool:
+        """Detect if I/O pairs match a Fibonacci-like pattern (dual base case)."""
+        # Need at least f(0) and f(1) in examples
+        io_dict = {int(p['input']): p['output'] for p in io_pairs}
+        
+        if 0 not in io_dict or 1 not in io_dict:
+            return False
+        
+        # Check if higher values follow f(n) = f(n-1) + f(n-2)
+        for n in io_dict:
+            if n >= 2:
+                if n-1 in io_dict and n-2 in io_dict:
+                    expected = io_dict[n-1] + io_dict[n-2]
+                    if io_dict[n] == expected:
+                        return True
+        return False
+
+    def _test_program(self, program: BSExpr, io_pairs: List[Dict[str, Any]], use_fib: bool) -> bool:
+        """Test a program against all I/O pairs."""
+        io_dict = {int(p['input']): p['output'] for p in io_pairs}
+        v0 = io_dict.get(0, 0)
+        v1 = io_dict.get(1, 1)
+        
+        for pair in io_pairs:
+            n = int(pair['input'])
+            expected = pair['output']
             
-            for pair in io_pairs:
-                n = int(pair['input'])
-                expected = pair['output']
-                
-                try:
-                    # Use run_recursive with base case (k=0, v=0 or v=1)
-                    # Try different base cases
+            try:
+                if use_fib:
+                    result = self.recursive_interpreter.run_recursive_fib(program, n, v0, v1)
+                else:
+                    # Try multiple single base cases
                     result = None
                     for base_k, base_v in [(0, 0), (0, 1), (1, 1), (1, 0)]:
                         try:
@@ -15511,23 +15617,13 @@ class HRMSidecar:
                                 break
                         except:
                             continue
-                    
-                    if result == expected:
-                        matches += 1
-                    else:
-                        valid = False
-                        break
-                except Exception:
-                    valid = False
-                    break
-            
-            if valid and matches == len(io_pairs):
-                # Found a solution!
-                code_str = str(program)
-                print(f"  > [RecursiveSynthesizer] SUCCESS! Found: {code_str}")
-                return (code_str, program)
+                
+                if result != expected:
+                    return False
+            except Exception:
+                return False
         
-        return None
+        return True
     
     def _generate_recursive_program(self, rng: random.Random, depth: int) -> BSExpr:
         """Generate random BSExpr with BSRecCall for recursive programs."""
