@@ -15376,7 +15376,7 @@ class HRMSidecar:
         # [NEW] Human-Level Concept Transfer Engine (No Transformers)
         self.transfer_engine = None
         if HAS_CONCEPT_TRANSFER:
-            self.transfer_engine = ConceptTransferEngine(interpreter=self.synthesizer.interp)
+            self.transfer_engine = ConceptTransferEngine(interpreter=self.synthesizer.interpreter)
             print("[HRM] ConceptTransferEngine initialized for human-level generalization.")
 
     def dream(
@@ -15472,7 +15472,7 @@ class HRMSidecar:
                     # We need to bind the current AST to the lambda
                     # Note: We assume unary for now or needs deeper signature analysis
                     # For safety, we skip complex signature inference and assume unary 'n' based.
-                    wrapper = make_primitive(ast_obj, self.synthesizer.interp)
+                    wrapper = make_primitive(ast_obj, self.synthesizer.interpreter)
                     self.synthesizer.register_primitive(name, wrapper)
                     print(f"  [RSI-Library] Learned new primitive '{name}' (DreamCoder-style reuse enabled)")
             
