@@ -432,5 +432,12 @@
     "usage": 1,
     "weight": 5.0,
     "hash": "a0e83e30d7799e8abaa5d341e02300fb335984b6c54495e1550835a3c00ea3cf"
+  },
+  "concept_122": {
+    "code": "min_list(sort_desc(n))",
+    "level": 1,
+    "usage": 1,
+    "weight": 5.0,
+    "hash": "a280c02c707e86f2a640da4da76a685f528c3b2cd3c34ad7d7c55dcf654b8e8e"
   }
 }

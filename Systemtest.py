@@ -39,6 +39,12 @@ except ImportError:
 
 try:
     from neuro_genetic_synthesizer import NeuroGeneticSynthesizer, SafeInterpreter, LibraryManager
+    try:
+        from neuro_genetic_synthesizer import NLMN
+    except ImportError:
+        NLMN = None
+        
+    from meta_heuristic import MetaHeuristic
     HAS_HYBRID_SYNTH = True
 except ImportError as e:
     print(f"[Systemtest] Import Warning: {e}")
@@ -15626,6 +15632,9 @@ class HRMSidecar:
         if HAS_CONCEPT_TRANSFER:
             self.transfer_engine = ConceptTransferEngine(interpreter=self.synthesizer.interpreter)
             print("[HRM] ConceptTransferEngine initialized for human-level generalization.")
+            
+        # [RSI] Meta-Heuristic Search Engine (Type A: Algorithm Improvement)
+        self.meta_heuristic = MetaHeuristic()
 
     def recursive_synthesize(self, io_pairs: List[Dict[str, Any]], max_size: int = 5) -> Optional[Tuple[str, Any]]:
         """
@@ -15643,17 +15652,31 @@ class HRMSidecar:
         if not all(isinstance(p.get('input'), (int, float)) for p in io_pairs):
             return None
         
-        # NO PATTERN DETECTION - Pure unbiased enumeration
-        print(f"  > [RecursiveSynthesizer] Bottom-up enumeration (max_size={max_size})...")
+        # [RSI Type A] Meta-Heuristic Best-First Search
+        # Instead of random/sequential, we Prioritize based on learned heuristics
+        print(f"  > [RecursiveSynthesizer] Best-First Search (max_size={max_size}) with Meta-Heuristic...")
         
-        # BOTTOM-UP ENUMERATION
-        # Generate all expressions by size and test each
         for size in range(1, max_size + 1):
             expressions = self._enumerate_expressions(size)
-            for program in expressions:
+            
+            # Score and Sort
+            scored_candidates = []
+            for expr in expressions:
+                score = self.meta_heuristic.get_score(expr)
+                scored_candidates.append((score, expr))
+            
+            # Sort descending: Highest score first
+            scored_candidates.sort(key=lambda x: x[0], reverse=True)
+            
+            # Test in optimal order
+            for score, program in scored_candidates:
                 if self._test_program(program, io_pairs):
                     code_str = str(program)
-                    print(f"  > [RecursiveSynthesizer] SUCCESS (size={size})! Found: {code_str}")
+                    print(f"  > [RSI-Meta] SUCCESS (score={score:.2f})! Found: {code_str}")
+                    
+                    # [RSI FEEDBACK LOOP] Update heuristic weights
+                    self.meta_heuristic.learn(program)
+                    
                     return (code_str, program)
         
         return None
@@ -16460,9 +16483,9 @@ def orchestrator_main():
     best_reward_so_far = -float('inf')
     
     
-    # 2. Run 20 iterations
+    # 2. Run 30 iterations
     start_time = time.time()
-    for i in range(20):
+    for i in range(30):
         print(f"\n--- Round {i} ---")
         try:
             # We use run_recursive_cycle to fully exercise the stack (Omega + Critic + Core)

@@ -1,0 +1,8 @@
+{
+  "recursion": 1.1,
+  "op_plus": 1.1,
+  "op_minus": 1.0,
+  "op_mult": 1.0,
+  "depth_penalty": 0.1,
+  "learning_rate": 0.1
+}
