@@ -15891,6 +15891,19 @@ class HRMSidecar:
                     final_code = f"def {name}(n):\n    return {code_str}"
                     print(f"  [INVENTION] {name}: {code_str} (Recursive Synthesis)")
                     return [(final_code, (ast_obj, 0, 0))]
+            else:
+                # [FIX] Route List/Matrix tasks to NeuroGeneticSynthesizer
+                # This engine has typed constraints and matrix ops (matrix_sum, flatten)
+                print(f"  > [NeuroGenetic] Synthesizing for List/Matrix input...")
+                neuro_res = self.synthesizer.synthesize(io_examples, timeout=5.0)
+                if neuro_res:
+                    code_str, ast_obj, complexity, score = neuro_res[0]
+                    self.concept_count += 1
+                    name = f"concept_{self.concept_count}"
+                    # Wrap as function definition for consistency
+                    final_code = f"def {name}(n):\n    return {code_str}"
+                    print(f"  [INVENTION] {name}: {code_str} (NeuroGenetic Synthesis)")
+                    return [(final_code, (ast_obj, complexity, score))]
         
         # 0. Bezalel Engine (Universal Resonance) - Honest & Fast
         # Only for I/O tasks.
