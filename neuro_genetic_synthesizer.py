@@ -17,6 +17,11 @@ try:
 except ImportError:
     np = None
 
+def _raise(ex):
+    """Helper to raise exceptions in lambdas."""
+    raise ex
+
+
 # ==============================================================================
 # CONFIGURATION
 # ==============================================================================
@@ -436,11 +441,11 @@ class LibraryManager:
             'filter_odd': (lambda lst: [x for x in lst[:100] if x % 2 == 1] if isinstance(lst, list) else lst, 0),
             
             # --- Aggregation (Bounded - Max 100) ---
-            'sum_list': (lambda lst: sum(lst[:100]) if isinstance(lst, list) else 0, 0),
-            'prod_list': (lambda lst: self._safe_product(lst[:100]) if isinstance(lst, list) else 1, 0),
-            'min_list': (lambda lst: min(lst[:100]) if isinstance(lst, list) and len(lst) > 0 else None, 0),
+            'sum_list': (lambda lst: sum(lst[:100]) if isinstance(lst, list) else (_raise(TypeError("sum_list expects list")), 0)[1], 0),
+            'prod_list': (lambda lst: self._safe_product(lst[:100]) if isinstance(lst, list) else (_raise(TypeError("prod_list expects list")), 0)[1], 0),
+            'min_list': (lambda lst: min(lst[:100]) if isinstance(lst, list) and len(lst) > 0 else None, 0), # None is valid for empty
             'max_list': (lambda lst: max(lst[:100]) if isinstance(lst, list) and len(lst) > 0 else None, 0),
-            'count_list': (lambda lst: len(lst) if isinstance(lst, list) else 0, 0),
+            'count_list': (lambda lst: len(lst) if isinstance(lst, list) else (_raise(TypeError("count_list expects list")), 0)[1], 0),
             
             # --- Matrix (2D List) Operations ---
             'flatten': (lambda m: self._safe_flatten(m), 0),
@@ -461,7 +466,7 @@ class LibraryManager:
             'insert_sorted': (lambda x, lst: self._insert_sorted(x, lst), 0),
             
             # --- Merge Sort Building Blocks ---
-            'split_half': (lambda lst: (lst[:len(lst)//2], lst[len(lst)//2:]) if isinstance(lst, list) else ([], []), 0),
+            'split_half': (lambda lst: (lst[:len(lst)//2], lst[len(lst)//2:]) if isinstance(lst, list) else (_raise(TypeError("split_half expects list")), None)[0], 0),
             'merge_sorted': (lambda a, b: self._merge_sorted(a, b), 0),
             
             # --- Higher-Order Functions (Genuine Functional Primitives) ---
@@ -490,7 +495,7 @@ class LibraryManager:
     def _insert_sorted(self, x, lst: list) -> list:
         """Insert element x into a sorted list maintaining order."""
         if not isinstance(lst, list):
-            return [x]
+            raise TypeError(f"insert_sorted expects list, got {type(lst).__name__}")
         if len(lst) > 100:  # Safety bound
             lst = lst[:100]
         result = []
@@ -507,9 +512,10 @@ class LibraryManager:
     def _merge_sorted(self, a: list, b: list) -> list:
         """Merge two sorted lists into one sorted list."""
         if not isinstance(a, list):
-            a = []
+             raise TypeError(f"merge_sorted expects list, got {type(a).__name__}")
         if not isinstance(b, list):
-            b = []
+             raise TypeError(f"merge_sorted expects list, got {type(b).__name__}")
+        
         # Safety bounds
         a = a[:50]
         b = b[:50]
@@ -587,42 +593,44 @@ class LibraryManager:
 
     def _safe_map(self, func_name: str, lst: list) -> list:
         """Apply a primitive to each element, max 100 iterations."""
-        if not isinstance(lst, list) or len(lst) > 100:
-            return lst[:100] if isinstance(lst, list) else []
+        if not isinstance(lst, list):
+            raise TypeError("map expects list")
+        if len(lst) > 100:
+            lst = lst[:100]
+            
         if func_name not in self.runtime_primitives:
-            return lst
+             raise ValueError(f"Unknown primitive {func_name}")
+             
         fn = self.runtime_primitives[func_name]
-        try:
-            return [fn(x) for x in lst[:100]]
-        except:
-            return lst
+        # Propagate exceptions!
+        return [fn(x) for x in lst]
 
     def _safe_filter(self, func_name: str, lst: list) -> list:
         """Filter list by predicate primitive, max 100 iterations."""
-        if not isinstance(lst, list) or len(lst) > 100:
-            return lst[:100] if isinstance(lst, list) else []
+        if not isinstance(lst, list): 
+             raise TypeError("filter expects list")
+        if len(lst) > 100: lst = lst[:100]
+        
         if func_name not in self.runtime_primitives:
-            return lst
+             raise ValueError(f"Unknown primitive {func_name}")
+             
         fn = self.runtime_primitives[func_name]
-        try:
-            return [x for x in lst[:100] if fn(x)]
-        except:
-            return lst
+        return [x for x in lst if fn(x)]
 
     def _safe_fold(self, func_name: str, init, lst: list):
-        """Left fold with max 100 iterations."""
-        if not isinstance(lst, list) or len(lst) > 100:
-            return init
+        """Fold list logic."""
+        if not isinstance(lst, list): 
+             raise TypeError("fold expects list")
+        if len(lst) > 100: lst = lst[:100]
+        
         if func_name not in self.runtime_primitives:
-            return init
+             raise ValueError(f"Unknown primitive {func_name}")
+             
         fn = self.runtime_primitives[func_name]
         acc = init
-        try:
-            for x in lst[:100]:
-                acc = fn(acc, x)
-            return acc
-        except:
-            return init
+        for x in lst:
+            acc = fn(acc, x)
+        return acc
 
     def _is_tautology(self, code: str, validation_ios: List[Dict], interpreter: SafeInterpreter) -> bool:
         """
