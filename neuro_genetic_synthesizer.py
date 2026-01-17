@@ -624,33 +624,128 @@ class LibraryManager:
         except:
             return init
 
+    def _is_tautology(self, code: str, validation_ios: List[Dict], interpreter: SafeInterpreter) -> bool:
+        """
+        Detects functional tautologies (always returns True, False, 0, or Input).
+        """
+        # 1. Syntactic checks
+        if "eq(n, n)" in code or "sub(n, n)" in code:
+            return True
+            
+        # 2. Semantic checks (Behavioral)
+        if not validation_ios: return True # Can't verify behavior
+        
+        # Check if output is constant or equal to input across all examples
+        first_out = None
+        all_same = True
+        is_identity = True
+        
+        try:
+            # quick abstract syntax tree check for single var
+            tree = ast.parse(code)
+            
+            for io in validation_ios:
+                env = {'n': io['input']}
+                res = interpreter.run(tree.body[0].value, env)
+                
+                if first_out is None:
+                    first_out = res
+                else:
+                    if res != first_out:
+                        all_same = False
+                
+                if res != io['input']:
+                    is_identity = False
+            
+            if all_same: return True # Constant function (e.g. always True)
+            if is_identity: return True # Identity function (reverse(reverse(n)) == n)
+            
+        except:
+            pass
+            
+        return False
+
+    def _provides_novelty(self, code: str, validation_ios: List[Dict], interpreter: SafeInterpreter) -> bool:
+        """
+        Ensures the new primitive behavior isn't already covered by a simple base primitive.
+        e.g. If new_prim(x) == reverse(x) for all inputs, strictly reject it.
+        """
+        if not validation_ios: return False
+        
+        # Get outputs of new primitive
+        new_outputs = []
+        try:
+            tree = ast.parse(code)
+            for io in validation_ios:
+                env = {'n': io['input']}
+                new_outputs.append(interpreter.run(tree.body[0].value, env))
+        except:
+            return False
+            
+        # Compare against Level 0/1 primitives
+        for name, prim in self.primitives.items():
+            if prim.level > 1: continue # Only compare against base/simple stuff
+            if prim.code == code: continue
+            
+            match = True
+            # Check alias
+            if name in self.runtime_primitives:
+                func = self.runtime_primitives[name]
+                for i, io in enumerate(validation_ios):
+                    try:
+                        # Assuming 1-arity for simple comparison
+                        existing_res = func(io['input'])
+                        if existing_res != new_outputs[i]:
+                            match = False
+                            break
+                    except:
+                        match = False
+                        break
+            
+            if match:
+                print(f"[Novelty] Rejecting: Behavior identical to existing '{name}'")
+                return False
+                
+        return True
+
     def register_new_primitive(self, name: str, code: str, interpreter: SafeInterpreter, 
                                validation_ios: List[Dict] = None, holdout_ios: List[Dict] = None) -> bool:
         """
-        Attempts to register a new primitive.
+        Attempts to register a new primitive with STRICT validation.
         CHECKS:
-        1. Semantic Uniqueness
-        2. Valid DAG (no circular deps, level check)
-        3. Regression Validation (HotSwap Pattern)
-        4. [FIX B] Holdout Validation (unseen during search)
-        
-        Registration requires >= 95% on BOTH regression and holdout.
+        1. MANDATORY Validation IO (>=3 examples)
+        2. Tautology Detection (eq(x,x), constant output, identity)
+        3. Semantic Uniqueness (Hash check)
+        4. Novelty Check (vs Base Library)
+        5. Regression & Holdout Score (>= 95%)
         """
-        # [RSI-Fix] Semantic De-Bloating (No Fake Complexity)
+        # [FIX 1] MANDATORY Validation
+        if not validation_ios or len(validation_ios) < 3:
+            print(f"[Library] Rejecting {name}: Validation requires >= 3 IO pairs (got {len(validation_ios) if validation_ios else 0})")
+            return False
+        
+        # [FIX 2] Tautology Detection
+        if self._is_tautology(code, validation_ios, interpreter):
+            print(f"[Library] Rejecting {name}: Detected tautology (constant/identity)")
+            return False
+
+        # [RSI-Fix] Semantic De-Bloating
         if self._is_bloated(code):
-            print(f"[Library] Rejecting {name}: Detected syntactic bloat (e.g. reverse(reverse(...)))")
+            print(f"[Library] Rejecting {name}: Detected syntactic bloat")
             return False
             
-        # 1. Parse & Hash
+        # 3. Hash Check
         s_hash = self.hasher.hash_code(code)
-        
-        # Check Uniqueness
         for p in self.primitives.values():
             if p.semantic_hash == s_hash and p.name != name:
                 print(f"[Library] Rejecting {name}: Semantically identical to {p.name}")
                 return False
         
-        # 2. Analyze Dependencies for DAG Level
+        # 4. Novelty Check (Behavioral)
+        if not self._provides_novelty(code, validation_ios, interpreter):
+            # Already logged in function
+            return False
+
         try:
             tree = ast.parse(code)
             deps = []
@@ -667,15 +762,16 @@ class LibraryManager:
             
             new_level = max_dep_level + 1
             
-            # 3. Regression Suite Validation (must pass >= 95%)
+            # 5. Strict Score Validation
             validator = PrimitiveValidator(interpreter)
-            if validation_ios:
-                reg_score = validator.validate_score(name, tree.body[0].value, validation_ios)
-                if reg_score < 0.95:
-                    print(f"[Library] Rejecting {name}: Regression score {reg_score:.1%} < 95%")
-                    return False
             
-            # 4. [FIX B] Holdout Validation (must pass >= 95%)
+            # Regression (Training Data)
+            reg_score = validator.validate_score(name, tree.body[0].value, validation_ios)
+            if reg_score < 0.95:
+                print(f"[Library] Rejecting {name}: Regression score {reg_score:.1%} < 95%")
+                return False
+            
+            # Holdout (Test Data)
             if holdout_ios:
                 hold_score = validator.validate_score(name, tree.body[0].value, holdout_ios)
                 if hold_score < 0.95:
@@ -688,8 +784,8 @@ class LibraryManager:
                 code=code,
                 ast_node=tree,
                 level=new_level,
-                usage_count=1,
-                weight=5.0, # High initial weight for novelty
+                usage_count=0, # Start at 0, prove worth
+                weight=5.0, 
                 dependencies=deps,
                 semantic_hash=s_hash
             )
@@ -697,7 +793,7 @@ class LibraryManager:
             self.primitives[name] = node
             self._compile_primitive_runtime(node, interpreter)
             self.save_registry()
-            print(f"[Library] Registered Level {new_level} primitive: {name}")
+            print(f"[Library] ✅ Registered Level {new_level} primitive: {name} (Passed Strict RSI Gate)")
             return True
             
         except Exception as e:

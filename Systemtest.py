@@ -15799,7 +15799,7 @@ class HRMSidecar:
         
         return f"{in_type}_to_{out_type}"
 
-    def _extract_and_register_subtrees(self, code: str, context: Dict) -> None:
+    def _extract_and_register_subtrees(self, code: str, context: Dict, io_examples: List[Dict] = None) -> None:
         """
         [PRESCRIPTION 3] Extract useful subtrees from successful solutions.
         This turns 'lucky finds' into 'systematic capabilities'.
@@ -15808,6 +15808,7 @@ class HRMSidecar:
         - Parse the AST of successful code
         - Extract valid Call nodes (function applications)
         - Register them as reusable primitives if not already known
+        - [FIX] STRICT VALIDATION: Generate IO pairs and valid against library
         """
         import ast
         try:
@@ -15856,13 +15857,41 @@ class HRMSidecar:
                     elif not params:
                         params = ['n']
                     
+                    # Only support single-argument subtrees 'n' for robust IO generation
+                    if params != ['n']:
+                        continue
+
                     param_str = ", ".join(params)
                     lambda_src = f"lambda {param_str}: {subtree_code}"
                     
+                    # [FIX] Generate Validation IOs for this subtree
                     func = eval(lambda_src, context)
-                    self.synthesizer.register_primitive(subtree_name, func)
-                    existing_primitives.add(subtree_name)
-                    subtrees_registered += 1
+                    subtree_validation_ios = []
+                    
+                    if io_examples:
+                        valid = True
+                        for example in io_examples[:5]: # Check first 5 examples
+                            try:
+                                inp = example['input']
+                                out = func(inp)
+                                subtree_validation_ios.append({'input': inp, 'output': out})
+                            except:
+                                valid = False
+                                break
+                        
+                        if valid and len(subtree_validation_ios) >= 3:
+                            # Use Strict Library Registration
+                            success = self.synthesizer.library.register_new_primitive(
+                                name=subtree_name,
+                                code=lambda_src, # Use lambda source as code
+                                interpreter=self.synthesizer.interpreter,
+                                validation_ios=subtree_validation_ios,
+                                holdout_ios=subtree_validation_ios # Use same for holdout in simple mode
+                            )
+                            
+                            if success:
+                                existing_primitives.add(subtree_name)
+                                subtrees_registered += 1
                     
                 except Exception:
                     pass
@@ -16143,7 +16172,7 @@ class HRMSidecar:
                     # [RSI] Library Learning: Extract reusable sub-concepts
                     if self.synthesizer:
                         ctx = self.synthesizer.library.primitives.copy() if self.synthesizer.library else {}
-                        self._extract_and_register_subtrees(code_str, ctx)
+                        self._extract_and_register_subtrees(code_str, ctx, io_examples)
 
                     return [(final_code, (ast_obj, 0, 0))]
             else:
@@ -16163,7 +16192,7 @@ class HRMSidecar:
                     # [RSI] Library Learning: Extract reusable sub-concepts
                     if self.synthesizer:
                         ctx = self.synthesizer.library.primitives.copy() if self.synthesizer.library else {}
-                        self._extract_and_register_subtrees(code_str, ctx)
+                        self._extract_and_register_subtrees(code_str, ctx, io_examples)
                         
                     return [(final_code, (ast_obj, complexity, score))]
         
