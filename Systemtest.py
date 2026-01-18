@@ -3881,6 +3881,37 @@ class InventionEvaluator:
         except Exception:
             return {"nodes": 0}
 
+    @staticmethod
+    def _task_payload(task: InventionTask) -> Dict[str, Any]:
+        return {
+            "kind": task.kind,
+            "input": task.input,
+            "expected": task.expected,
+            "hint": task.hint,
+            "descriptor": task.descriptor,
+        }
+
+    @staticmethod
+    def _wrap_candidate_code(code: str, task_payload: Dict[str, Any]) -> str:
+        normalized = textwrap.dedent(code).strip()
+        lines = [
+            "from types import SimpleNamespace",
+            "",
+            normalized,
+            "",
+            f"task = SimpleNamespace(**{task_payload!r})",
+            "_solve = locals().get(\"solve\")",
+            "if _solve:",
+            "    result = _solve(task)",
+            "else:",
+            "    result = None",
+            "if \"solve\" in locals():",
+            "    del solve",
+            "if \"main\" in locals():",
+            "    del main",
+        ]
+        return "\n".join(lines)
+
     def _run_in_subprocess(self, code: str, task: InventionTask, timeout: float) -> Tuple[bool, str]:
         success, info = run_candidate_with_watchdog(code, task, timeout)
         if success:
@@ -4720,20 +4751,6 @@ SAFE_FUNCS: Dict[str, Callable] = {
 GRAMMAR_PROBS: Dict[str, float] = {k: 1.0 for k in SAFE_FUNCS}
 GRAMMAR_PROBS.update({"binop": 2.0, "call": 15.0, "const": 1.0, "var": 2.0})
 
-SAFE_BUILTINS = {
-    "abs": abs,
-    "min": min,
-    "max": max,
-    "float": float,
-    "int": int,
-    "len": len,
-    "range": range,
-    "list": list,
-    "sorted": sorted,
-    "reversed": reversed,
-    "sum": sum,
-}
-
 # ---------------------------
 # Algo-mode safe primitives
 # ---------------------------
@@ -4846,7 +4863,6 @@ SAFE_ALGO_FUNCS: Dict[str, Callable] = {
     "int": int,
 }
 
-SAFE_VARS = {"x"} | {f"v{i}" for i in range(10)}
 
 
 # grid helpers (ARC-like)
@@ -6730,7 +6746,7 @@ class FunctionLibrary:
             sub_expr = _to_src(sub)
             if node_count(sub_expr) < 3:
                 return None
-            ok, _ = validate_expr(sub_expr, extra=set(self.funcs.keys()))
+            ok, _ = validate_expr(sub_expr, SAFE_FUNCS, SAFE_BUILTINS, SAFE_VARS, extra=set(self.funcs.keys()))
             if not ok:
                 return None
             name = f"h{len(self.funcs) + 1}"
@@ -6747,7 +6763,7 @@ class FunctionLibrary:
         try:
             call = f"{fn.name}(x)"
             new = expr.replace("x", call, 1) if rng.random() < 0.5 else f"({expr}+{call})"
-            ok, _ = validate_expr(new, extra=set(self.funcs.keys()))
+            ok, _ = validate_expr(new, SAFE_FUNCS, SAFE_BUILTINS, SAFE_VARS, extra=set(self.funcs.keys()))
             return (new, fn.name) if ok else (expr, None)
         except Exception:
             return (expr, None)
@@ -9381,8 +9397,8 @@ def run_rsi_loop(
 
 def cmd_selftest(args):
     print("[selftest] Validating...")
-    assert validate_expr("sin(x) + x*x")[0]
-    assert not validate_expr("__import__('os')")[0]
+    assert validate_expr("sin(x) + x*x", SAFE_FUNCS, SAFE_BUILTINS, SAFE_VARS)[0]
+    assert not validate_expr("__import__('os')", SAFE_FUNCS, SAFE_BUILTINS, SAFE_VARS)[0]
 
     g = seed_genome(random.Random(42))
     t = TaskSpec()
@@ -16228,6 +16244,7 @@ class SingularityMonitor:
 
 def run_hrm_life():
     """INFINITE HRM LIFE LOOP - 4 Cognitive Capabilities + RSI"""
+    trace_exec("Systemtest.run_hrm_life")
     print("\n" + "=" * 70)
     print("  SINGULARITY LOOP - causal reasoning | physical intuition | self-state | metacognition")
     print("  Ctrl+C to stop.")
