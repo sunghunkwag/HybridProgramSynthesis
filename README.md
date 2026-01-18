@@ -1,4 +1,5 @@
-# Neuro-Genetic Program Synthesis with Recursive Self-Improvement (RSI)
+# Hybrid-Program-Synthesis-with-RSI
+
 
 This repository contains an experimental implementation of a program synthesis engine capable of Recursive Self-Improvement (RSI) through neuro-genetic search and hierarchical library learning.
 
