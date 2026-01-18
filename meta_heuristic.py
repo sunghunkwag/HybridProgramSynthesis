@@ -453,14 +453,6 @@ class MetaHeuristic:
         # Save updated weights to disk (Critical for Treatment group learning)
         self._save_weights()
 
-    def _save_weights(self):
-        """Save weights to JSON file."""
-        if self.no_io: return
-            
-        try:
-            with open(self.WEIGHTS_FILE, 'w') as f:
-                json.dump(self.weights, f, indent=4)
-        except Exception as e:
-            print(f"[RSI-Meta] Failed to save weights: {e}")
+
 
 
